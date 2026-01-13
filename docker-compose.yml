@@ -1,0 +1,16 @@
+services:
+  sandbox:
+    environment:
+      USER: root
+    image: ubuntu:24.04
+    command: tail -f /dev/null
+    stop_signal: SIGKILL
+    volumes:
+      - ./steward:/app/steward:ro
+      - ./.deps:/app/.deps:ro
+      - ./sys.Stewardfile:/app/Stewardfile:ro
+      - cache:/var/cache/steward
+    working_dir: /app
+
+volumes:
+  cache: ~
