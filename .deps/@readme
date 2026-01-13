@@ -1,0 +1,142 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -Eeuo pipefail;
+shopt -s inherit_errexit;
+shopt -s nullglob;
+
+source "/usr/local/bin/bash-import";
+
+DOCFILE="$(dirname "$0")/../steward";
+
+BEGIN_CODE='```bash'
+END_CODE='```'
+
+# Generate README.md
+cat <<-MD
+	# Steward
+
+	> Declarative DSL for installing packages, in a shareable fileformat called Stewardfile.
+
+	## Installation
+
+	$BEGIN_CODE
+	curl -1fsSL https://raw.githubusercontent.com/curatorium/steward/main/steward -o /usr/local/bin/steward
+	chmod +x /usr/local/bin/steward
+	$END_CODE
+
+	## Usage
+
+	$([[ -n "$(docs:tag steward usage)" ]] && cat <<-xMD
+		$BEGIN_CODE
+		$(docs:tag steward usage | sed 's/^/  /')
+		$END_CODE
+	xMD
+	)
+
+	$([[ -n "$(docs:tag -f md steward flag)" ]] && cat <<-xMD
+		| Flag | Description |
+		|------|-------------|
+		$(docs:tag -f md steward flag)
+	xMD
+	)
+
+	$([[ -n "$(docs:tag -f md steward option)" ]] && cat <<-xMD
+		| Option | Description |
+		|------|-------------|
+		$(docs:tag -f md steward option)
+	xMD
+	)
+
+	$([[ -n "$(docs:tag -f md steward arg)" ]] && cat <<-xMD
+		| Argument | Description |
+		|----------|-------------|
+		$(docs:tag -f md steward arg)
+	xMD
+	)
+
+	## Syntax
+MD
+
+for name in $(docs:list keyword); do
+	cat <<-MD
+		### \`$name\`
+
+		$(docs:tag "$name" desc)
+
+	MD
+
+	if [[ -n "$(docs:tag "$name" usage)" ]]; then
+		cat <<-MD
+			$BEGIN_CODE
+			$(docs:tag "$name" usage)
+			$END_CODE
+
+		MD
+	fi
+
+	if [[ -n "$(docs:tag -f md "$name" flag)" ]]; then
+		cat <<-MD
+			| Flag | Description |
+			|------|-------------|
+			$(docs:tag -f md "$name" flag)
+
+		MD
+	fi
+
+	if [[ -n "$(docs:tag -f md "$name" option)" ]]; then
+		cat <<-MD
+			| Option | Description |
+			|------|-------------|
+			$(docs:tag -f md "$name" option)
+
+		MD
+	fi
+
+	if [[ -n "$(docs:tag -f md "$name" arg)" ]]; then
+		cat <<-MD
+			| Argument | Description |
+			|----------|-------------|
+			$(docs:tag -f md "$name" arg)
+
+		MD
+	fi
+done
+
+cat <<-MD
+	## Example Stewardfiles
+
+	### Docker
+
+	$BEGIN_CODE
+	$(cat examples/docker.Stewardfile)
+	$END_CODE
+
+	### NodeJS
+
+	$BEGIN_CODE
+	$(cat examples/nodejs.Stewardfile)
+	$END_CODE
+
+	## License
+
+	MIT
+MD

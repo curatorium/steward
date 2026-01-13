@@ -1,0 +1,8 @@
+# NodeJS
+key nodesource https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+src nodesource "https://deb.nodesource.com/node_20.x nodistro main"
+apt nodejs
+
+defer <<SH
+  npm install --global yarn
+SH

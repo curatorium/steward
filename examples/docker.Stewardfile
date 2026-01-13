@@ -1,0 +1,5 @@
+# Docker
+key docker https://download.docker.com/linux/ubuntu/gpg
+src docker "https://download.docker.com/linux/debian $VERSION_CODENAME stable"
+apt docker-ce-cli
+apt docker-compose-plugin
