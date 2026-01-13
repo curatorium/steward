@@ -1,0 +1,6 @@
+.claude/
+.deps/@github/
+.deps/@http/
+.deps/@https/
+.dist/
+.idea/

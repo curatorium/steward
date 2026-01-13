@@ -1,0 +1,771 @@
+source ./steward;
+
+# Helper: reset /tmp/steward between tests
+reset() {
+	rm -fR /tmp/steward;
+	mkdir -p /tmp/steward;
+}
+
+# Helper: check if pattern exists in any file under /tmp/steward
+generated() {
+	grep -rq "$1" /tmp/steward 2>/dev/null;
+}
+
+
+# steward:key Tests
+#------------------------------------------------------------------------------
+
+test:key:valid() {
+	reset;
+	steward:key docker https://download.docker.com/linux/ubuntu/gpg || return 1;
+	generated "download.docker.com" || return 1;
+	generated "docker.gpg" || return 1;
+}
+
+test:key:missing-name() {
+	reset;
+	local ARGS=();
+	steward:key 2>/dev/null && return 1;
+	return 0;
+}
+
+test:key:missing-url() {
+	reset;
+	local ARGS=(docker);
+	steward:key docker 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:src Tests
+#------------------------------------------------------------------------------
+
+test:src:valid-full() {
+	reset;
+	steward:src docker https://download.docker.com/linux/ubuntu jammy stable || return 1;
+	generated "download.docker.com" || return 1;
+	generated "jammy" || return 1;
+	generated "stable" || return 1;
+}
+
+test:src:valid-deb-url() {
+	reset;
+	steward:src https://example.com/package.deb || return 1;
+	generated "example.com" || return 1;
+	generated "apt install" || return 1;
+}
+
+test:src:no-key-flag() {
+	reset;
+	steward:src --no-key ppa https://ppa.example.com jammy main || return 1;
+	generated "signed-by" && return 1;
+	return 0;
+}
+
+test:src:missing-name() {
+	reset;
+	steward:src 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:apt Tests
+#------------------------------------------------------------------------------
+
+test:apt:valid() {
+	reset;
+	steward:apt vim || return 1;
+	grep -q "^vim$" /tmp/steward/packages || return 1;
+}
+
+test:apt:versioned() {
+	reset;
+	steward:apt "vim=2:8.2.3995-1" || return 1;
+	grep -q "vim=2:8.2.3995-1" /tmp/steward/packages || return 1;
+}
+
+test:apt:try-flag() {
+	reset;
+	steward:apt --try optional-pkg || return 1;
+	grep -q "optional-pkg" /tmp/steward/packages? || return 1;
+}
+
+test:apt:missing-name() {
+	reset;
+	steward:apt 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:deb Tests
+#------------------------------------------------------------------------------
+
+test:deb:valid() {
+	reset;
+	steward:deb https://example.com/package.deb || return 1;
+	generated "example.com" || return 1;
+	generated "apt install" || return 1;
+}
+
+test:deb:try-flag() {
+	reset;
+	steward:deb --try https://example.com/package.deb || return 1;
+	generated "example.com" || return 1;
+}
+
+test:deb:missing-url() {
+	reset;
+	steward:deb 2>/dev/null && return 1;
+	return 0;
+}
+
+test:deb:invalid-url() {
+	reset;
+	steward:deb /local/path.deb 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:bin Tests
+#------------------------------------------------------------------------------
+
+test:bin:valid() {
+	reset;
+	steward:bin jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64 || return 1;
+	generated "jq" || return 1;
+	generated "github.com" || return 1;
+	generated "/usr/local/bin" || return 1;
+}
+
+test:bin:missing-name() {
+	reset;
+	steward:bin 2>/dev/null && return 1;
+	return 0;
+}
+
+test:bin:missing-url() {
+	reset;
+	steward:bin jq 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:ext Tests
+#------------------------------------------------------------------------------
+
+test:ext:valid() {
+	reset;
+	steward:ext https://get.docker.com || return 1;
+	generated "get.docker.com" || return 1;
+}
+
+test:ext:with-shell() {
+	reset;
+	steward:ext https://get.docker.com sh || return 1;
+	generated "get.docker.com" || return 1;
+	generated "'sh'" || return 1;
+}
+
+test:ext:missing-url() {
+	reset;
+	steward:ext 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:eager Tests
+#------------------------------------------------------------------------------
+
+test:eager:valid() {
+	reset;
+	steward:eager setup <<<"echo hello";
+	generated "echo hello" || return 1;
+	[[ -f /tmp/steward/000-eager-setup.sh ]] || return 1;
+}
+
+test:eager:custom-order() {
+	reset;
+	steward:eager :50 early <<<"echo first";
+	[[ -f /tmp/steward/050-eager-early.sh ]] || return 1;
+}
+
+test:eager:internal-flag() {
+	reset;
+	steward:eager --internal :20 hook <<<"echo injected";
+	[[ -f /tmp/steward/120-eager-hook.sh ]] || return 1;
+}
+
+test:eager:no-name() {
+	reset;
+	steward:eager <<<"echo anonymous";
+	generated "echo anonymous" || return 1;
+}
+
+# steward:defer Tests
+#------------------------------------------------------------------------------
+
+test:defer:valid() {
+	reset;
+	steward:defer setup <<<"echo hello";
+	generated "echo hello" || return 1;
+	[[ -f /tmp/steward/200-deferred-setup.sh ]] || return 1;
+}
+
+test:defer:custom-order() {
+	reset;
+	steward:defer :50 early <<<"echo first";
+	[[ -f /tmp/steward/250-deferred-early.sh ]] || return 1;
+}
+
+test:defer:no-name() {
+	reset;
+	steward:defer <<<"echo anonymous";
+	generated "echo anonymous" || return 1;
+}
+
+# steward:on-amd64 / steward:on-arm64 Tests
+#------------------------------------------------------------------------------
+
+test:on-amd64:executes-on-match() {
+	reset;
+	ARCH=amd64 steward:on-amd64 steward:apt vim-amd64 || return 1;
+	grep -q "vim-amd64" /tmp/steward/packages || return 1;
+}
+
+test:on-amd64:skips-on-mismatch() {
+	reset;
+	ARCH=arm64 steward:on-amd64 steward:apt vim-amd64;
+	grep -q "vim-amd64" /tmp/steward/packages 2>/dev/null && return 1;
+	return 0;
+}
+
+test:on-arm64:executes-on-match() {
+	reset;
+	ARCH=arm64 steward:on-arm64 steward:apt vim-arm64 || return 1;
+	grep -q "vim-arm64" /tmp/steward/packages || return 1;
+}
+
+test:on-arm64:skips-on-mismatch() {
+	reset;
+	ARCH=amd64 steward:on-arm64 steward:apt vim-arm64;
+	grep -q "vim-arm64" /tmp/steward/packages 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:in-dev Tests
+#------------------------------------------------------------------------------
+
+test:in-dev:executes-on-app-env() {
+	reset;
+	APP_ENV=dev steward:in-dev steward:apt vim-dev || return 1;
+	grep -q "vim-dev" /tmp/steward/packages || return 1;
+}
+
+test:in-dev:executes-on-app-debug() {
+	reset;
+	APP_DEBUG=1 steward:in-dev steward:apt vim-debug || return 1;
+	grep -q "vim-debug" /tmp/steward/packages || return 1;
+}
+
+test:in-dev:executes-on-debug() {
+	reset;
+	DEBUG=1 steward:in-dev steward:apt vim-dbg || return 1;
+	grep -q "vim-dbg" /tmp/steward/packages || return 1;
+}
+
+test:in-dev:skips-on-prod() {
+	reset;
+	APP_ENV=prod steward:in-dev steward:apt vim-prod;
+	grep -q "vim-prod" /tmp/steward/packages 2>/dev/null && return 1;
+	return 0;
+}
+
+test:in-dev:skips-on-unset() {
+	reset;
+	steward:in-dev steward:apt vim-unset;
+	grep -q "vim-unset" /tmp/steward/packages 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:include Tests
+#------------------------------------------------------------------------------
+
+test:include:local-file() {
+	reset;
+	local tmpfile=$(mktemp);
+	echo 'steward:apt included-pkg' > "$tmpfile";
+	steward:include "$tmpfile" || return 1;
+	rm -f "$tmpfile";
+	grep -q "included-pkg" /tmp/steward/packages || return 1;
+}
+
+test:include:missing-file() {
+	reset;
+	steward:include /nonexistent/file 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:guard Tests
+#------------------------------------------------------------------------------
+
+test:guard:cmd-present() {
+	reset;
+	# guard should exit 0 (skip) when command exists; run in subshell to catch exit
+	(steward:guard bash) && return 0;
+	return 1;
+}
+
+test:guard:cmd-absent() {
+	reset;
+	# guard should NOT exit when command doesn't exist; function continues
+	(steward:guard nonexistent-cmd-xyz-12345 && echo "continued") || return 1;
+	return 0;
+}
+
+test:guard:file-present() {
+	reset;
+	local tmpfile=$(mktemp);
+	(steward:guard --file "$tmpfile") && { rm -f "$tmpfile"; return 0; };
+	rm -f "$tmpfile";
+	return 1;
+}
+
+test:guard:file-absent() {
+	reset;
+	(steward:guard --file /nonexistent/file/xyz && echo "continued") || return 1;
+	return 0;
+}
+
+test:guard:dir-present() {
+	reset;
+	(steward:guard --dir /tmp) && return 0;
+	return 1;
+}
+
+test:guard:dir-absent() {
+	reset;
+	(steward:guard --dir /nonexistent/dir/xyz && echo "continued") || return 1;
+	return 0;
+}
+
+test:guard:does-not-affect-other-functions() {
+	reset;
+	# Define two functions: first one guards (skips), second should still run
+	local tmpdir=$(mktemp -d);
+	cat > "$tmpdir/Stewardfile" <<'STEW'
+guarded_func() {
+	guard bash;
+	apt should-not-be-installed;
+}
+unguarded_func() {
+	apt should-be-installed;
+}
+STEW
+	(cd "$SRC_DIR" && ./steward --dry-run "$tmpdir/Stewardfile") >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
+	rm -fR "$tmpdir";
+	grep -q "should-not-be-installed" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "should-be-installed" /tmp/steward/packages || return 1;
+	return 0;
+}
+
+test:guard:force-skips-guard() {
+	reset;
+	# --force should bypass guards: guarded task should run even though bash exists
+	local tmpdir=$(mktemp -d);
+	cat > "$tmpdir/Stewardfile" <<'STEW'
+guarded_func() {
+	guard bash;
+	apt guarded-pkg;
+}
+STEW
+	(cd "$SRC_DIR" && ./steward --dry-run --force "$tmpdir/Stewardfile") >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
+	rm -fR "$tmpdir";
+	grep -q "guarded-pkg" /tmp/steward/packages || return 1;
+}
+
+# Command Interface Tests (using --dry-run to avoid sudo)
+#------------------------------------------------------------------------------
+
+test:cli:file-args() {
+	reset;
+	local tmp1=$(mktemp) tmp2=$(mktemp);
+	echo 'steward:apt pkg-from-file1' > "$tmp1";
+	echo 'steward:apt pkg-from-file2' > "$tmp2";
+	(cd "$SRC_DIR" && ./steward --dry-run "$tmp1" "$tmp2") >/dev/null 2>&1 || return 1;
+	rm -f "$tmp1" "$tmp2";
+	grep -q "pkg-from-file1" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-file2" /tmp/steward/packages || return 1;
+}
+
+test:cli:pipe-cat() {
+	reset;
+	local tmpfile=$(mktemp);
+	echo 'steward:apt pkg-from-pipe' > "$tmpfile";
+	cat "$tmpfile" | (cd "$SRC_DIR" && ./steward --dry-run) >/dev/null 2>&1 || return 1;
+	rm -f "$tmpfile";
+	grep -q "pkg-from-pipe" /tmp/steward/packages || return 1;
+}
+
+test:cli:redirect-file() {
+	reset;
+	local tmpfile=$(mktemp);
+	echo 'steward:apt pkg-from-redirect' > "$tmpfile";
+	(cd "$SRC_DIR" && ./steward --dry-run < "$tmpfile") >/dev/null 2>&1 || return 1;
+	rm -f "$tmpfile";
+	grep -q "pkg-from-redirect" /tmp/steward/packages || return 1;
+}
+
+test:cli:herestring() {
+	reset;
+	(cd "$SRC_DIR" && ./steward --dry-run <<<"steward:apt pkg-from-herestring") >/dev/null 2>&1 || return 1;
+	grep -q "pkg-from-herestring" /tmp/steward/packages || return 1;
+}
+
+test:cli:process-substitution() {
+	reset;
+	(cd "$SRC_DIR" && ./steward --dry-run < <(echo "steward:apt pkg-from-procsub")) >/dev/null 2>&1 || return 1;
+	grep -q "pkg-from-procsub" /tmp/steward/packages || return 1;
+}
+
+test:cli:heredoc() {
+	reset;
+	(cd "$SRC_DIR" && ./steward --dry-run <<STEW) >/dev/null 2>&1 || return 1;
+steward:apt pkg-from-heredoc
+STEW
+	grep -q "pkg-from-heredoc" /tmp/steward/packages || return 1;
+}
+
+test:cli:default-stewardfile() {
+	reset;
+	local tmpdir=$(mktemp -d);
+	echo 'steward:apt pkg-from-default' > "$tmpdir/Stewardfile";
+	ln -s "$SRC_DIR/.deps" "$tmpdir/.deps";
+	(cd "$tmpdir" && "$SRC_DIR/steward" --dry-run) >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
+	rm -fR "$tmpdir";
+	grep -q "pkg-from-default" /tmp/steward/packages || return 1;
+}
+
+test:cli:dry-run-no-exec() {
+	local output;
+	output=$(cd "$SRC_DIR" && ./steward --dry-run <<<"steward:apt vim" 2>&1);
+	# dry-run should cat scripts, not source them
+	# check that we see the script content printed
+	[[ "$output" == *"apt"* ]] || return 1;
+}
+
+test:cli:task-runs-only-named() {
+	reset;
+	local tmpfile=$(mktemp);
+	cat > "$tmpfile" <<'STEW'
+alpha() { steward:apt pkg-alpha; }
+beta()  { steward:apt pkg-beta; }
+STEW
+	(cd "$SRC_DIR" && ./steward --dry-run --task alpha "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
+	rm -f "$tmpfile";
+	grep -q "pkg-alpha" /tmp/steward/packages || return 1;
+	grep -q "pkg-beta" /tmp/steward/packages 2>/dev/null && return 1;
+	return 0;
+}
+
+test:cli:task-without-flag-runs-all() {
+	reset;
+	local tmpfile=$(mktemp);
+	cat > "$tmpfile" <<'STEW'
+alpha() { steward:apt pkg-alpha; }
+beta()  { steward:apt pkg-beta; }
+STEW
+	(cd "$SRC_DIR" && ./steward --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
+	rm -f "$tmpfile";
+	grep -q "pkg-alpha" /tmp/steward/packages || return 1;
+	grep -q "pkg-beta" /tmp/steward/packages || return 1;
+}
+
+# Output
+#------------------------------------------------------------------------------
+
+output() {
+cat <<MD
+# steward Test Results
+
+## steward:key
+
+Scenario     | Invocation                      | Expected                  | ✓/✗
+-------------|---------------------------------|---------------------------|----
+valid        | key docker https://example/gpg  | URL + name in output      | $(t key:valid)
+missing-name | key                             | error                     | $(t key:missing-name)
+missing-url  | key docker                      | error                     | $(t key:missing-url)
+
+---
+
+## steward:src
+
+Scenario      | Invocation                              | Expected                    | ✓/✗
+--------------|-----------------------------------------|-----------------------------|----
+valid-full    | src docker https://repo jammy stable    | repo + dist + comp in output| $(t src:valid-full)
+valid-deb-url | src https://example.com/pkg.deb         | URL + dpkg in output        | $(t src:valid-deb-url)
+no-key-flag   | src --no-key ppa https://repo jammy     | no signed-by in output      | $(t src:no-key-flag)
+missing-name  | src                                     | error                       | $(t src:missing-name)
+
+---
+
+## steward:apt
+
+Scenario     | Invocation          | Expected                 | ✓/✗
+-------------|---------------------|--------------------------|----
+valid        | apt vim             | vim in packages file     | $(t apt:valid)
+versioned    | apt vim=2:8.2       | version preserved        | $(t apt:versioned)
+try-flag     | apt --try pkg       | pkg in packages? file    | $(t apt:try-flag)
+missing-name | apt                 | error                    | $(t apt:missing-name)
+
+---
+
+## steward:deb
+
+Scenario    | Invocation                       | Expected            | ✓/✗
+------------|----------------------------------|---------------------|----
+valid       | deb https://example.com/pkg.deb  | URL + dpkg in output| $(t deb:valid)
+try-flag    | deb --try https://example/pkg.deb| success             | $(t deb:try-flag)
+missing-url | deb                              | error               | $(t deb:missing-url)
+invalid-url | deb /local/path.deb              | error               | $(t deb:invalid-url)
+
+---
+
+## steward:bin
+
+Scenario     | Invocation                  | Expected                     | ✓/✗
+-------------|-----------------------------|------------------------------|----
+valid        | bin jq https://example/jq   | name + URL + path in output  | $(t bin:valid)
+missing-name | bin                         | error                        | $(t bin:missing-name)
+missing-url  | bin jq                      | error                        | $(t bin:missing-url)
+
+---
+
+## steward:ext
+
+Scenario    | Invocation                  | Expected        | ✓/✗
+------------|-----------------------------|-----------------|----
+valid       | ext https://get.docker.com  | URL in output   | $(t ext:valid)
+with-shell  | ext https://example.com sh  | shell in output | $(t ext:with-shell)
+missing-url | ext                         | error           | $(t ext:missing-url)
+
+---
+
+## steward:eager
+
+Scenario      | Invocation                          | Expected                  | ✓/✗
+--------------|-------------------------------------|---------------------------|----
+valid         | eager setup <<<"echo hello"         | content in 000-eager-*    | $(t eager:valid)
+custom-order  | eager :50 early <<<"x"              | 050-eager-* created       | $(t eager:custom-order)
+internal-flag | eager --internal :20 hook <<<"x"    | 120-eager-* created       | $(t eager:internal-flag)
+no-name       | eager <<<"x"                        | content captured          | $(t eager:no-name)
+
+---
+
+## steward:defer
+
+Scenario     | Invocation                   | Expected                   | ✓/✗
+-------------|------------------------------|----------------------------|----
+valid        | defer setup <<<"echo hello"  | content in 200-deferred-*  | $(t defer:valid)
+custom-order | defer :50 early <<<"x"       | 250-deferred-* created     | $(t defer:custom-order)
+no-name      | defer <<<"x"                 | content captured           | $(t defer:no-name)
+
+---
+
+## steward:on-amd64 / steward:on-arm64
+
+Scenario       | Invocation                  | Expected                 | ✓/✗
+---------------|-----------------------------|--------------------------|----
+amd64-on-amd64 | ARCH=amd64; on-amd64 apt vim   | vim in packages       | $(t on-amd64:executes-on-match)
+amd64-on-arm64 | ARCH=arm64; on-amd64 apt vim   | vim NOT in packages   | $(t on-amd64:skips-on-mismatch)
+arm64-on-arm64 | ARCH=arm64; on-arm64 apt vim   | vim in packages       | $(t on-arm64:executes-on-match)
+arm64-on-amd64 | ARCH=amd64; on-arm64 apt vim   | vim NOT in packages   | $(t on-arm64:skips-on-mismatch)
+
+---
+
+## steward:in-dev
+
+Scenario       | Invocation                    | Expected              | ✓/✗
+---------------|-------------------------------|-----------------------|----
+app-env-dev    | APP_ENV=dev; in-dev apt vim   | vim in packages       | $(t in-dev:executes-on-app-env)
+app-debug-1    | APP_DEBUG=1; in-dev apt vim   | vim in packages       | $(t in-dev:executes-on-app-debug)
+debug-set      | DEBUG=1; in-dev apt vim       | vim in packages       | $(t in-dev:executes-on-debug)
+app-env-prod   | APP_ENV=prod; in-dev apt vim  | vim NOT in packages   | $(t in-dev:skips-on-prod)
+env-unset      | in-dev apt vim                | vim NOT in packages   | $(t in-dev:skips-on-unset)
+
+---
+
+## steward:include
+
+Scenario     | Invocation             | Expected                  | ✓/✗
+-------------|------------------------|---------------------------|----
+local-file   | include test.sf        | included content processed| $(t include:local-file)
+missing-file | include /nonexistent   | error                     | $(t include:missing-file)
+
+---
+
+## steward:guard
+
+Scenario        | Invocation                      | Expected                      | ✓/✗
+----------------|---------------------------------|-------------------------------|----
+cmd-present     | guard bash                      | exits subshell (skip)         | $(t guard:cmd-present)
+cmd-absent      | guard nonexistent-cmd           | continues execution           | $(t guard:cmd-absent)
+file-present    | guard --file /tmp/exists        | exits subshell (skip)         | $(t guard:file-present)
+file-absent     | guard --file /nonexistent       | continues execution           | $(t guard:file-absent)
+dir-present     | guard --dir /tmp                | exits subshell (skip)         | $(t guard:dir-present)
+dir-absent      | guard --dir /nonexistent        | continues execution           | $(t guard:dir-absent)
+no-side-effects | guard bash (in func1); func2    | func2 still runs              | $(t guard:does-not-affect-other-functions)
+force-flag      | --force; guard bash              | guard bypassed, task runs     | $(t guard:force-skips-guard)
+
+---
+
+## Command Interface
+
+Scenario      | Invocation                | Expected              | ✓/✗
+--------------|---------------------------|-----------------------|----
+file-args     | steward file1 file2       | both files processed  | $(t cli:file-args)
+pipe-cat      | cat file | steward        | stdin processed       | $(t cli:pipe-cat)
+redirect-file | steward < file            | stdin processed       | $(t cli:redirect-file)
+herestring    | steward <<<"..."          | content processed     | $(t cli:herestring)
+process-sub   | steward < <(echo ...)     | content processed     | $(t cli:process-substitution)
+heredoc       | steward <<STEW...STEW     | content processed     | $(t cli:heredoc)
+default-file  | steward (with Stewardfile)| Stewardfile used      | $(t cli:default-stewardfile)
+dry-run       | steward --dry-run         | scripts shown, not run| $(t cli:dry-run-no-exec)
+task-filter   | steward --task alpha      | only alpha runs       | $(t cli:task-runs-only-named)
+task-unset    | steward (no --task)       | all functions run     | $(t cli:task-without-flag-runs-all)
+
+MD
+
+# Docker Integration Tests (skip if Docker not available)
+#------------------------------------------------------------------------------
+
+DOCKER_IMAGE="ubuntu:24.04"
+
+docker:available() {
+	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+}
+
+docker:run() {
+	docker run --rm -v "$SRC_DIR:/app" -w /app "$DOCKER_IMAGE" bash -c "$1"
+}
+
+docker:steward() {
+	local input="$1"; shift;
+	docker run --rm -i -v "$SRC_DIR:/app" -w /app "$DOCKER_IMAGE" \
+		bash -c '/app/steward '"$*" <<< "$input"
+}
+
+docker:steward:verify() {
+	local input="$1" verify="$2"; shift 2;
+	docker run --rm -i -v "$SRC_DIR:/app" -w /app "$DOCKER_IMAGE" \
+		bash -c '/app/steward '"$*"' && '"$verify" <<< "$input"
+}
+
+test:docker:apt-installs() {
+	docker:available || return 2;
+	docker:steward:verify "apt curl" "curl --version" >/dev/null 2>&1 || return 1;
+}
+
+test:docker:apt-try-missing() {
+	docker:available || return 2;
+	docker:steward "apt --try nonexistent-pkg-12345" >/dev/null 2>&1 || return 1;
+}
+
+test:docker:bin-downloads() {
+	docker:available || return 2;
+	docker:steward:verify "bin jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64" "jq --version" >/dev/null 2>&1 || return 1;
+}
+
+test:docker:defer-executes() {
+	docker:available || return 2;
+	local output;
+	output=$(docker:steward 'defer test <<< "echo DEFER_MARKER"' 2>&1) || return 1;
+	[[ "$output" == *"DEFER_MARKER"* ]] || return 1;
+}
+
+test:docker:include-file() {
+	docker:available || return 2;
+	echo "steward:apt wget" > "$SRC_DIR/.include-test-fixture";
+	docker:steward:verify "include .include-test-fixture" "wget --version" >/dev/null 2>&1;
+	local rc=$?; rm -f "$SRC_DIR/.include-test-fixture"; return $rc;
+}
+
+test:docker:dockerfile-run() {
+	docker:available || return 2;
+	local tmpdir=$(mktemp -d);
+
+	# Stewardfile that queues a marker package
+	echo 'steward:apt pkg-from-dockerfile' > "$tmpdir/Stewardfile";
+
+	# Dockerfile: steward invoked as a RUN instruction (no stdin piped)
+	cat > "$tmpdir/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+COPY steward /app/steward
+COPY .deps /app/.deps
+COPY Stewardfile /app/Stewardfile
+WORKDIR /app
+RUN bash ./steward --dry-run && test -f /tmp/steward/packages
+DOCKERFILE
+
+	# Populate build context
+	cp "$SRC_DIR/steward" "$tmpdir/steward";
+	cp -r "$SRC_DIR/.deps" "$tmpdir/.deps";
+
+	# Build — if stdin detection is broken, steward hangs reading an empty FIFO instead of Stewardfile
+	# Timeout: safety net in case the FIFO fix regresses (prevents test suite from hanging)
+	timeout 30 docker build --no-cache --progress=plain "$tmpdir" >/dev/null 2>&1;
+	local rc=$?; rm -fR "$tmpdir"; return $rc;
+}
+
+test:docker:dockerfile-run-fifo() {
+	docker:available || return 2;
+	local tmpdir=$(mktemp -d);
+
+	# Stewardfile that queues a marker package
+	echo 'steward:apt pkg-from-fifo-test' > "$tmpdir/Stewardfile";
+
+	# Dockerfile: steward invoked directly (./steward, not bash ./steward)
+	# Docker attaches a writerless FIFO to stdin during RUN — steward must not hang on it
+	cat > "$tmpdir/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+COPY steward /app/steward
+COPY .deps /app/.deps
+COPY Stewardfile /app/Stewardfile
+WORKDIR /app
+RUN ./steward --dry-run && grep -q 'pkg-from-fifo-test' /tmp/steward/packages
+DOCKERFILE
+
+	# Populate build context
+	cp "$SRC_DIR/steward" "$tmpdir/steward";
+	cp -r "$SRC_DIR/.deps" "$tmpdir/.deps";
+
+	# Build — timeout is a safety net; with the fix, steward should finish in under 5 seconds
+	timeout 30 docker build --no-cache --progress=plain "$tmpdir" >/dev/null 2>&1;
+	local rc=$?; rm -fR "$tmpdir"; return $rc;
+}
+
+if docker:available; then
+cat <<MD
+
+---
+
+## Docker Integration Tests
+
+> Running in: $DOCKER_IMAGE
+
+Scenario       | Invocation                   | Expected              | ✓/✗
+---------------|------------------------------|-----------------------|----
+apt-installs   | apt curl                     | curl works            | $(t docker:apt-installs)
+apt-try-missing| apt --try nonexistent        | exits 0               | $(t docker:apt-try-missing)
+bin-downloads  | bin jq https://...           | jq works              | $(t docker:bin-downloads)
+defer-executes | defer <<< "echo X"           | X in output           | $(t docker:defer-executes)
+include-file   | include fixtures/test.sf     | included pkg works    | $(t docker:include-file)
+dockerfile-run | RUN steward (in Dockerfile)  | reads Stewardfile     | $(t docker:dockerfile-run)
+dockerfile-fifo| RUN ./steward (writerless FIFO) | no hang, reads Stewardfile | $(t docker:dockerfile-run-fifo)
+
+MD
+else
+cat <<MD
+
+---
+
+## Docker Integration Tests
+
+> ⚠️ Skipped: Docker not available
+
+MD
+fi
+}
