@@ -1,0 +1,8 @@
+# runtime dependencies
+:apt bash
+:apt curl
+:apt gpg
+
+# dev dependencies
+:apt git
+:apt shellcheck

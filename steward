@@ -1,0 +1,364 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -Eeuo pipefail;
+shopt -s inherit_errexit;
+shopt -s nullglob;
+
+# @name steward
+# @type command
+# @desc Declarative DSL for installing packages, in a shareable file format called Stewardfile.
+#
+# @usage steward [...file|url] < Stewardfile
+# @usage cat Stewardfile | steward [...file|url]
+#
+# @flag [-h|--help]	Prints out the usage guide.
+# @arg [...file|url]	Paths or URLs to process, default: Stewardfile
+function main() {
+	[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && main:help && return;
+
+	main:init;
+
+	# Allow importing (sourcing) this script
+	[[ "${BASH_SOURCE[0]}" != "${0}" ]] && return;
+
+	# Check if stdin is available
+	local USE_STDIN=false;
+	stat -L -c '%F' /dev/stdin 2>/dev/null | grep '^(regular file|fifo)$' && USE_STDIN=true;
+
+	# Default file to read is Stewardfile
+	[[ $# -eq 0 ]] && [[ "$USE_STDIN" == "false" ]] && set -- "Stewardfile";
+
+	# Read each Stewardfile provided
+	for file in "$@"; do
+		:include "$file";
+	done
+
+	# Read Stewardfile from stdin
+	if [[ "$USE_STDIN" == "true" ]]; then
+		:include /dev/stdin;
+	fi
+
+	:apply "$@";
+}
+
+function main:init() {
+	rm -fR /tmp/steward;
+	mkdir -p /tmp/steward;
+
+	# Bail out if apt is not installed
+	command -v apt >/dev/null 2>&1 || (echo "apt is not installed" && exit 1);
+
+	# Expose architecture & distro info
+	ARCH="$(dpkg --print-architecture)";
+	STEWARDFILE="${BASH_SOURCE[0]}";
+	STEWARDFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)";
+	source /etc/os-release;
+	export ARCH STEWARDFILE STEWARDFILE_DIR;
+}
+
+# @name :include
+# @type keyword
+# @desc Include another Stewardfile (supports local files, URLs, and GitHub shorthand)
+#
+# @usage :include <file|url>
+#
+# @arg <file|url>	Local path, URL
+function :include() {
+	local file="${1?usage: :include <file|url>}"; shift;
+	[[ "$file" =~ ^gh:[^/]+/[^/]+/.+ ]] && file="https://raw.githubusercontent.com/${file#gh:}";
+	[[ "$file" =~ ^gh:[^/]+/[^/]+$ ]] && file="https://raw.githubusercontent.com/${file#gh:}/refs/heads/main/Stewardfile";
+
+	if [[ "$file" =~ ^https?:// ]]; then
+		local url="$file";
+		file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+		curl -1fsSL "$url" > "$file";
+	fi
+
+	# shellcheck source=/dev/null
+	source "$file";
+}
+
+# @name :key
+# @type keyword
+# @desc Add a GPG keyring for package verification
+#
+# @usage :key <name> <url>
+#
+# @arg <name>	Keyring filename (without .gpg extension)
+# @arg <url>	URL to the GPG key (ASCII-armored or binary)
+function :key() {
+	local name="${1?usage: key <name> <url>}"; shift;
+	local url="${1?usage: key <name> <url>}"; shift;
+
+	cat <<-SH >> /tmp/steward/key.sh
+		curl -1fsSL '$url' > '/usr/share/keyrings/$name.gpg';
+		if grep -qe '^-----BEGIN PGP PUBLIC KEY BLOCK-----' '/usr/share/keyrings/$name.gpg'; then
+			mv '/usr/share/keyrings/$name.gpg' '/usr/share/keyrings/$name.asc';
+			gpg --dearmor < '/usr/share/keyrings/$name.asc' > '/usr/share/keyrings/$name.gpg';
+			rm -f '/usr/share/keyrings/$name.asc';
+		fi
+
+		chown root:root '/usr/share/keyrings/$name.gpg';
+		chmod u+rw,go+r '/usr/share/keyrings/$name.gpg';
+	SH
+}
+
+# @name :src
+# @type keyword
+# @desc Add an APT repository source list
+#
+# @usage :src [--no-key] <name> <repo> [dist] [...comp]
+# @usage :src <url:*.deb>
+#
+# @flag [--no-key]	Skip keyring verification
+# @arg <name>		Source list filename (without .list extension)
+# @arg <repo>		APT repository URL (e.g. "https://example.com/repo/")
+# @arg [dist]		Distribution codename (suite) (ex.: jammy, bookwork, $VERSION_CODENAME)
+# @arg [...comp]	Component(s) (ex.: main, security, universe)
+function :src() {
+	[[ "${1:-}" =~ .deb$ ]] && :deb --now "${1:-}" && return;
+
+	local unsigned=false;
+	[[ "${1:-}" == "--no-key" ]] && unsigned=true && shift;
+
+	local name="${1?usage: src [--no-key] <name> <repo> [dist] [...comp]}"; shift;
+	local repo="${1?usage: src [--no-key] <name> <repo> [dist] [...comp]}"; shift;
+	local dist="${1:-}"; shift || true;
+	local comp="$*";
+
+	local signer="";
+	[[ "$unsigned" != "true" ]] && signer="[signed-by=/usr/share/keyrings/$name.gpg]";
+
+	cat <<-SH >> /tmp/steward/src.sh
+		echo 'deb $signer $repo $dist $comp' > '/etc/apt/sources.list.d/$name.list';
+		chown root:root '/etc/apt/sources.list.d/$name.list';
+		chmod u+rw,go+r '/etc/apt/sources.list.d/$name.list';
+	SH
+}
+
+# @name :apt
+# @type keyword
+# @desc Schedule an APT package for installation
+#
+# @usage :apt [--try] <name[=version]>
+#
+# @flag [--try]			Don't fail if package unavailable
+# @arg <name[=version]>	Package name, optionally with =version suffix
+function :apt() {
+	local mod="";
+	[[ "${1:-}" == "--try" ]] && mod="?" && shift;
+
+	local name="${1?usage: :apt <name>[version]}";
+	echo "$name" >> "/tmp/steward/packages$mod";
+}
+
+# @name :deb
+# @type keyword
+# @desc Schedule a .deb package for installation
+#
+# @usage :deb [--try|--now] <url>
+#
+# @flag [--try]		Don't fail if package unavailable
+# @flag [--now]		Install immediately (for bootstrapping sources)
+#
+# @arg <url>	URL to a .deb file
+function :deb() {
+	local mod="";
+	[[ "${1:-}" == "--try" ]] && mod="?" && shift;
+	[[ "${1:-}" == "--now" ]] && mod="!" && shift;
+
+	local url="${1?usage: deb [--try|--now] <url>}"; shift;
+	[[ "$url" =~ ^https?:// ]];
+
+	local file="$url";
+	file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+
+	cat <<-SH >> "/tmp/steward/deb.sh$mod"
+		curl -1fsSL '$url' > '/tmp/steward/$file.deb$mod';
+		dpkg -i '/tmp/steward/$file.deb$mod';
+	SH
+}
+
+# @name :bin
+# @type keyword
+# @desc Download and install a binary to /usr/local/bin
+#
+# @usage :bin <name> <url>
+#
+# @arg <name>	Binary filename in /usr/local/bin
+# @arg <url>	URL to download the binary from
+function :bin() {
+	local name="${1?usage: :bin <name> <url>}"; shift;
+	local url="${1?usage: :bin <url>}"; shift;
+
+	cat <<-SH >> /tmp/steward/bin.sh
+		curl -1fsSL '$url' > '/usr/local/bin/$name';
+		chown root:root '/usr/local/bin/$name';
+		chmod +x '/usr/local/bin/$name';
+	SH
+}
+
+# @name :ext
+# @type keyword
+# @desc Execute an external installer script from a URL
+#
+# @usage :ext <url> [shell] [...args]
+#
+# @arg <url>		URL to the installer script
+# @arg <shell>		Interpreter to use (default: bash)
+# @arg [...args]	Additional arguments passed to the script
+function :ext() {
+	local url="${1?usage: ext <url>}"; shift;
+	local shell="${1:-bash}";
+
+	cat <<-SH >> /tmp/steward/ext.sh
+		curl -1fsSL '$url' | '$shell' $@;
+	SH
+}
+
+# @name :defer
+# @type keyword
+# @desc Defer shell commands to run after all packages are installed
+#
+# @usage :defer [name] <<<"command"
+# @usage :defer [name] <<SH ... SH
+#
+# @arg <name>	Optional label for the deferred block (for debugging)
+function :defer() {
+	local name="${1:-}";
+	cat >> "/tmp/steward/defer.sh";
+}
+
+# @name :amd64
+# @type keyword
+# @desc Run a command only on amd64 architecture
+#
+# @usage :amd64 <command> <args...>
+#
+# @arg <keyword>	The steward keyword to run (e.g. :deb, :apt)
+# @arg [...args]	Arguments for the keyword
+function :amd64() {
+	if [[ "$ARCH" == "amd64" ]]; then
+		eval "$(printf '%q ' "$@")";
+	fi
+}
+
+# @name :arm64
+# @type keyword
+# @desc Run a command only on arm64 architecture
+#
+# @usage :arm64 <keyword> <args...>
+#
+# @arg <keyword>	The steward command to run (e.g. :deb, :apt)
+# @arg [...args]	Arguments for the keyword
+function :arm64() {
+	if [[ "$ARCH" == "arm64" ]]; then
+		eval "$(printf '%q ' "$@")";
+	fi
+}
+
+# @name :apply
+# @type keyword
+# @desc Execute all queued operations in order (auto-invoked unless steward is importd/sourced)
+function :apply() {
+	# Run with sudo privileges
+	[[ "$EUID" -ne 0 ]] && exec sudo "$0" "$@";
+
+	# Docker environments may have cleaned up the package lists
+	[[ -z "$(ls -A /var/lib/apt/lists 2>/dev/null)" ]] && apt update -qq;
+
+	# Install pre-requisites
+	if ! command -V curl >/dev/null 2>&1 || ! command -V gpg >/dev/null 2>&1; then
+		apt install -qqy --no-install-recommends apt-transport-https curl gpg;
+	fi
+
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/key.sh"  ]] && source "/tmp/steward/key.sh";
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/src.sh"  ]] && source "/tmp/steward/src.sh";
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/deb.sh!" ]] && source "/tmp/steward/deb.sh!";
+
+	# Update after adding repositories
+	apt update -qq;
+
+	sort -u "/tmp/steward/packages"  | xargs -r apt install -qqy --no-install-recommends;
+	sort -u "/tmp/steward/packages?" | xargs -r apt install -qqy --no-install-recommends || true;
+
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/deb.sh"  ]] && source "/tmp/steward/deb.sh";
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/deb.sh?" ]] && source "/tmp/steward/deb.sh?";
+
+	# Allow *.deb packages to pull in additional dependencies
+	apt --fix-broken install -qqy;
+
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/ext.sh"  ]]  && source "/tmp/steward/ext.sh";
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/bin.sh"  ]]  && source "/tmp/steward/bin.sh";
+	# shellcheck source=/dev/null
+	[[ -f "/tmp/steward/defer.sh" ]] && source "/tmp/steward/defer.sh";
+
+	# Docker containers need APT cleanup.
+	[[ ! -f .dockerenv ]] && return;
+
+	apt autoremove -y --purge;
+	apt clean;
+
+	rm -fR /var/lib/apt/lists;
+}
+
+function main:help() {
+	local self="$0";
+
+	__doc() { sed -n "/^# @name ${1?}\$/,/^# @name /p" "$self" | sed '${ /^# @name /d }' | grep "^# @${2?} " | sed "s/^# @${2?} //"; };
+
+	cat <<-TXT
+		NAME
+			$(__doc steward name | sed 's/^/	/') -- $(__doc steward desc)
+
+		USAGE
+			$(__doc steward usage	| sed 's/^/	/')
+
+			$(__doc steward flag   | sed 's/^/	/')
+			$(__doc steward option | sed 's/^/	/')
+			$(__doc steward arg    | sed 's/^/	/')
+
+	TXT
+
+	echo "SYNTAX";
+	grep -B1 "^# @type keyword" "$self" | grep -oP '(?<=^# @name )\S+' | while read -r name; do
+		cat <<-TXT | awk 'NF{print; blank=0} !NF && !blank++{print ""}'
+				${name/#/	} -- $(__doc "$name" desc)
+
+					$(__doc "$name" usage	| sed 's/^/		/')
+
+					$(__doc "$name" flag   | sed 's/^/		/')
+					$(__doc "$name" option | sed 's/^/		/')
+					$(__doc "$name" arg    | sed 's/^/		/')
+
+		TXT
+	done
+}
+
+main "$@";

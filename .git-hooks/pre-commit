@@ -1,0 +1,16 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+
+set -Eeuo pipefail;
+shopt -s inherit_errexit;
+shopt -s nullglob;
+
+REPO="$(git rev-parse --show-toplevel)"
+
+# ShellCheck
+shellcheck -x "$REPO/steward" ||
+    (echo "ERROR: shellcheck failed." && exit 3);
+
+# Docs up to date
+[[ "$("$REPO/README.sh")" == "$(cat "$REPO/README.md")" ]] ||
+    (echo "Docs are out of date." && exit 2);
