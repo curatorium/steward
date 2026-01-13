@@ -1,0 +1,41 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+
+source /usr/local/bin/bash-import;
+
+DOCFILE="$(dirname ${BASH_SOURCE[0]})/../steward";
+export DOCFILE;
+
+T=$'\t'
+
+cat <<-TXT
+	NAME
+	${T}steward -- $(docs:tag steward desc)
+
+	USAGE
+	$(docs:tag -i 1 steward usage)
+
+	$(docs:tag -i 1 steward flag,option,arg)
+
+	SYNTAX
+TXT
+
+for name in $(docs:list keyword); do
+	cat <<-TXT | awk 'NF{print; blank=0} !NF && !blank++{print ""}'
+		$name -- $(docs:tag "$name" desc)
+
+		$(docs:tag -i 1 "$name" usage)
+
+		$(docs:tag -i 1 "$name" flag,option,arg)
+
+	TXT
+done | sed 's/^/\t/'
+
+cat <<-TXT
+	SCHEDULE
+	${T}$(# shellcheck disable=SC2034
+	echo "The order in which the scheduled actions ar executed.")
+
+	$(grep -oP "(?<=/tmp/steward/)([-\w]+)(?=.sh)" "$DOCFILE" | sort -u | sed $'s/^/\t:/; s/--/\t/')
+
+TXT
