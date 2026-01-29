@@ -1,0 +1,92 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# Markdown documentation formatters that wrap help:* functions.
+# Source this file and set DOCFILE to the file to extract documentation from.
+
+DOCFILE="${DOCFILE:-}"
+
+# @name readme:names
+# @type function
+#
+# @arg <type>	The @type to filter by (command, keyword, function)
+readme:names() {
+	help:names "$1"
+}
+
+# @name readme:tag
+# @type function
+#
+# @arg <name>	The @name of the documented item
+# @arg <tag>	The tag to extract (desc, usage, arg, flag, etc.)
+readme:tag() {
+	help:tag "$1" "$2"
+}
+
+# @name readme:desc
+# @type function
+#
+# @arg <name>	The @name of the documented item
+readme:desc() {
+	help:desc "$1"
+}
+
+# @name readme:usage
+# @type function
+#
+# @arg <name>	The @name of the documented item
+readme:usage() {
+	help:usage "$1"
+}
+
+# @name readme:flag
+# @type function
+#
+# @arg <name>	The @name of the documented item
+readme:flag() {
+	help:flag "$1" | while read -r n desc; do printf "| \`%s\` | %s |\n" "${n//|/\\|}" "${desc//|/\\|}"; done
+}
+
+# @name readme:option
+# @type function
+#
+# @arg <name>	The @name of the documented item
+readme:option() {
+	help:option "$1" | while read -r n desc; do printf "| \`%s\` | %s |\n" "${n//|/\\|}" "${desc//|/\\|}"; done
+}
+
+# @name readme:arg
+# @type function
+#
+# @arg <name>	The @name of the documented item
+readme:arg() {
+	help:arg "$1" | while read -r n desc; do printf "| \`%s\` | %s |\n" "${n//|/\\|}" "${desc//|/\\|}"; done
+}
+
+# @name readme:include
+# @type function
+#
+# @arg <file>	Path to file (relative to README_DIR or absolute)
+readme:include() {
+	cat "${README_DIR:-.}/${1?}"
+}
+
+source "$(dirname "${BASH_SOURCE[0]}")/help"; # !inline

@@ -1,0 +1,134 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -Eeuo pipefail;
+shopt -s inherit_errexit;
+shopt -s nullglob;
+
+README_DIR="$(dirname "$0")"
+DOCFILE="$README_DIR/steward"
+source "$README_DIR/libs/readme"
+
+BEGIN_CODE='```bash'
+END_CODE='```'
+
+# Generate README.md
+cat <<-MD
+	# Steward
+
+	> Declarative DSL for installing packages, in a shareable fileformat called Stewardfile.
+
+	## Installation
+
+	$BEGIN_CODE
+	curl -1fsSL https://raw.githubusercontent.com/curatorium/steward/main/steward -o /usr/local/bin/steward
+	chmod +x /usr/local/bin/steward
+	$END_CODE
+
+	## Usage
+
+	$BEGIN_CODE
+	$(readme:usage steward | sed 's/^/  /')
+	$END_CODE
+
+	$([[ -n "$(readme:flag steward)" ]] && cat <<-xMD
+		| Flag | Description |
+		|------|-------------|
+		$(readme:flag steward)
+	xMD
+	)
+
+	$([[ -n "$(readme:option steward)" ]] && cat <<-xMD
+		| Option | Description |
+		|------|-------------|
+		$(readme:option steward)
+	xMD
+	)
+
+	$([[ -n "$(readme:arg steward)" ]] && cat <<-xMD
+		| Argument | Description |
+		|----------|-------------|
+		$(readme:arg steward)
+	xMD
+	)
+
+	## Syntax
+MD
+
+for name in $(readme:names keyword); do
+	cat <<-MD
+		### \`$name\`
+
+		$(readme:desc "$name")
+
+		$BEGIN_CODE
+		$(readme:usage "$name")
+		$END_CODE
+
+	MD
+
+	if [[ -n "$(readme:flag "$name")" ]]; then
+		cat <<-MD
+			| Flag | Description |
+			|------|-------------|
+			$(readme:flag "$name")
+
+		MD
+	fi
+
+	if [[ -n "$(readme:option "$name")" ]]; then
+		cat <<-MD
+			| Option | Description |
+			|------|-------------|
+			$(readme:option "$name")
+
+		MD
+	fi
+
+	if [[ -n "$(readme:arg "$name")" ]]; then
+		cat <<-MD
+			| Argument | Description |
+			|----------|-------------|
+			$(readme:arg "$name")
+
+		MD
+	fi
+done
+
+cat <<-MD
+	## Example Stewardfiles
+
+	### Docker
+
+	$BEGIN_CODE
+	$(readme:include examples/docker.Stewardfile)
+	$END_CODE
+
+	### NodeJS
+
+	$BEGIN_CODE
+	$(readme:include examples/nodejs.Stewardfile)
+	$END_CODE
+
+	## License
+
+	MIT
+MD

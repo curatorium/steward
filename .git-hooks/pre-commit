@@ -8,9 +8,20 @@ shopt -s nullglob;
 REPO="$(git rev-parse --show-toplevel)"
 
 # ShellCheck
-shellcheck -x "$REPO/steward" ||
-    (echo "ERROR: shellcheck failed." && exit 3);
+for file in steward libs/args libs/inliner; do
+  cd "$(dirname "$REPO/$file")";
+  shellcheck -x "$REPO/$file" ||
+      (echo "ERROR: $file failed shellcheck." && exit 3);
+  cd -;
+done
+
+# Tests
+for file in steward.test libs/args.test; do
+  "$REPO/$file" > "$REPO/$file.md" &&
+  [[ "$("$REPO/$file")" == "$(cat "$REPO/$file.md")" ]] ||
+      (echo "ERROR: $file tests failed." && exit 3);
+done
 
 # Docs up to date
-[[ "$("$REPO/README.sh")" == "$(cat "$REPO/README.md")" ]] ||
+[[ "$("$REPO/readme")" == "$(cat "$REPO/README.md")" ]] ||
     (echo "Docs are out of date." && exit 2);

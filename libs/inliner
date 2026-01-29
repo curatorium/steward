@@ -1,0 +1,55 @@
+#!/bin/bash
+# Copyright (c) 2025 Mihai Stancu (https://github.com/curatorium)
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+# @name inliner
+# @type command
+# @desc Inline source statements or functions into a single output file.
+#
+# @usage inliner [-f <file>] [-o <out>] <subcommand> [...args]
+#
+# @flag [-f|--file]		Input file. Default: /dev/stdin.
+# @flag [-o|--out]		Output file.
+function inliner:main() {
+	# shellcheck disable=SC2034
+	local ARGS=("$@");
+	local file="/dev/stdin"; args:opt file f;
+	local out="";            args:opt out o;
+
+	cat "$file" > "$out";
+
+	grep -oP '^\s*source [^;#]+;?\s*# !inline: \K[^\n]+' "$file" |
+	while IFS= read -r funcs; do
+		local tmp="";
+		tmp=$(mktemp);
+		# shellcheck disable=SC2064
+		trap "rm -f '$tmp'" EXIT;
+
+		# shellcheck disable=SC2046
+		declare -f $(declare -F | grep -P "^declare -f ${funcs/*/.*/}" | sed 's/declare -f //') > "$tmp";
+		sed -i "/# !inline: $funcs/{
+			r $tmp
+			d
+		}" "$out";
+	done
+}
+source "$(dirname "${BASH_SOURCE[0]}")/args"; # !inline: args:*
+
+inliner:main "$@";
