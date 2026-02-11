@@ -244,7 +244,7 @@ function steward:apt() {
 
 	[[ "$try" == "true" ]] && mod="-try";
 	[[ "$temp" == "true" ]] && mod="-tmp";
-	echo "$name" >> "/tmp/steward/packages$mod";
+	echo "$name" >> "/tmp/steward/apt-packages$mod";
 }
 
 # @name deb
@@ -273,7 +273,7 @@ function steward:deb() {
 	cat <<-SH >> "/tmp/steward/120--deb-download.sh"
 		curl -1fsSLR -z '/var/cache/apt/archives/$file' -o '/var/cache/apt/archives/$file' '$url' $onFail;
 	SH
-	echo "/var/cache/apt/archives/$file" >> "/tmp/steward/packages$mod";
+	echo "/var/cache/apt/archives/$file" >> "/tmp/steward/apt-packages$mod";
 }
 
 # @name bin
@@ -592,23 +592,23 @@ function steward:apply() {
 	[[ "$dry_run" == "true" ]] && source="cat";
 
 	# Create apt-install + cleanup scripts if any packages were queued
-	local pkg_files=(/tmp/steward/packages*)
+	local pkg_files=(/tmp/steward/apt-packages*)
 	if [[ ${#pkg_files[@]} -gt 0 ]]; then
 		cat <<-'SH' > "/tmp/steward/130--apt-install.sh"
 			command -v apt >/dev/null 2>&1 || (echo "apt is not installed" && exit 1);
 
 			apt update -qq;
 
-			cat /tmp/steward/packages-tmp >> /tmp/steward/packages 2>/dev/null;
-			sort -u /tmp/steward/packages 2>/dev/null | xargs -r apt install -qqy --no-install-recommends;
-			sort -u /tmp/steward/packages-try 2>/dev/null | xargs -r apt install -qqy --no-install-recommends || true;
+			cat /tmp/steward/apt-packages-tmp >> /tmp/steward/apt-packages 2>/dev/null;
+			sort -u /tmp/steward/apt-packages 2>/dev/null | xargs -r apt install -qqy --no-install-recommends;
+			sort -u /tmp/steward/apt-packages-try 2>/dev/null | xargs -r apt install -qqy --no-install-recommends || true;
 		SH
 	fi
 
 	# Docker containers need APT cleanup (after all installers)
 	if [[ -f /.dockerenv ]]; then cat <<-'SH' > "/tmp/steward/199--apt-cleanup.sh"
-		[[ -f /tmp/steward/packages-tmp ]] &&
-			sort -u /tmp/steward/packages-tmp |
+		[[ -f /tmp/steward/apt-packages-tmp ]] &&
+			sort -u /tmp/steward/apt-packages-tmp |
 			while read -r e; do [[ "$e" == *.deb ]] && dpkg-deb --field "$e" Package 2>/dev/null || echo "$e"; done |
 			xargs -r apt remove -qqy;
 		apt autoremove -y --purge;

@@ -73,19 +73,19 @@ test:src:missing-name() {
 test:apt:valid() {
 	reset;
 	steward:apt vim || return 1;
-	grep -q "^vim$" /tmp/steward/packages || return 1;
+	grep -q "^vim$" /tmp/steward/apt-packages || return 1;
 }
 
 test:apt:versioned() {
 	reset;
 	steward:apt "vim=2:8.2.3995-1" || return 1;
-	grep -q "vim=2:8.2.3995-1" /tmp/steward/packages || return 1;
+	grep -q "vim=2:8.2.3995-1" /tmp/steward/apt-packages || return 1;
 }
 
 test:apt:try-flag() {
 	reset;
 	steward:apt --try optional-pkg || return 1;
-	grep -q "optional-pkg" /tmp/steward/packages-try || return 1;
+	grep -q "optional-pkg" /tmp/steward/apt-packages-try || return 1;
 }
 
 test:apt:missing-name() {
@@ -101,21 +101,21 @@ test:deb:valid() {
 	reset;
 	steward:deb https://example.com/package.deb || return 1;
 	generated "example.com" || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/packages || return 1;
+	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages || return 1;
 }
 
 test:deb:try-flag() {
 	reset;
 	steward:deb --try https://example.com/package.deb || return 1;
 	generated "example.com" || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/packages-try || return 1;
+	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages-try || return 1;
 }
 
 test:deb:temp-flag() {
 	reset;
 	steward:deb --temp https://example.com/package.deb || return 1;
 	generated "example.com" || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/packages-tmp || return 1;
+	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages-tmp || return 1;
 }
 
 test:deb:missing-url() {
@@ -209,7 +209,7 @@ test:npm:prereq-skipped-when-present() {
 	steward:npm is-odd || return 1;
 	[[ ! -f /tmp/steward/100--key-setup.sh ]] || return 1;
 	[[ ! -f /tmp/steward/110--src-setup.sh ]] || return 1;
-	[[ ! -f /tmp/steward/packages ]] || return 1;
+	[[ ! -f /tmp/steward/apt-packages ]] || return 1;
 	# but the manifest should still be generated
 	[[ -f /tmp/steward/npm-packages ]] || return 1;
 }
@@ -500,26 +500,26 @@ test:defer:no-name() {
 test:on-amd64:executes-on-match() {
 	reset;
 	ARCH=amd64 steward:on-amd64 steward:apt vim-amd64 || return 1;
-	grep -q "vim-amd64" /tmp/steward/packages || return 1;
+	grep -q "vim-amd64" /tmp/steward/apt-packages || return 1;
 }
 
 test:on-amd64:skips-on-mismatch() {
 	reset;
 	ARCH=arm64 steward:on-amd64 steward:apt vim-amd64;
-	grep -q "vim-amd64" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "vim-amd64" /tmp/steward/apt-packages 2>/dev/null && return 1;
 	return 0;
 }
 
 test:on-arm64:executes-on-match() {
 	reset;
 	ARCH=arm64 steward:on-arm64 steward:apt vim-arm64 || return 1;
-	grep -q "vim-arm64" /tmp/steward/packages || return 1;
+	grep -q "vim-arm64" /tmp/steward/apt-packages || return 1;
 }
 
 test:on-arm64:skips-on-mismatch() {
 	reset;
 	ARCH=amd64 steward:on-arm64 steward:apt vim-arm64;
-	grep -q "vim-arm64" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "vim-arm64" /tmp/steward/apt-packages 2>/dev/null && return 1;
 	return 0;
 }
 
@@ -529,32 +529,32 @@ test:on-arm64:skips-on-mismatch() {
 test:in-dev:executes-on-app-env() {
 	reset;
 	APP_ENV=dev steward:in-dev steward:apt vim-dev || return 1;
-	grep -q "vim-dev" /tmp/steward/packages || return 1;
+	grep -q "vim-dev" /tmp/steward/apt-packages || return 1;
 }
 
 test:in-dev:executes-on-app-debug() {
 	reset;
 	APP_DEBUG=1 steward:in-dev steward:apt vim-debug || return 1;
-	grep -q "vim-debug" /tmp/steward/packages || return 1;
+	grep -q "vim-debug" /tmp/steward/apt-packages || return 1;
 }
 
 test:in-dev:executes-on-debug() {
 	reset;
 	DEBUG=1 steward:in-dev steward:apt vim-dbg || return 1;
-	grep -q "vim-dbg" /tmp/steward/packages || return 1;
+	grep -q "vim-dbg" /tmp/steward/apt-packages || return 1;
 }
 
 test:in-dev:skips-on-prod() {
 	reset;
 	APP_ENV=prod steward:in-dev steward:apt vim-prod;
-	grep -q "vim-prod" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "vim-prod" /tmp/steward/apt-packages 2>/dev/null && return 1;
 	return 0;
 }
 
 test:in-dev:skips-on-unset() {
 	reset;
 	steward:in-dev steward:apt vim-unset;
-	grep -q "vim-unset" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "vim-unset" /tmp/steward/apt-packages 2>/dev/null && return 1;
 	return 0;
 }
 
@@ -567,7 +567,7 @@ test:include:local-file() {
 	echo 'steward:apt included-pkg' > "$tmpfile";
 	steward:include "$tmpfile" || return 1;
 	rm -f "$tmpfile";
-	grep -q "included-pkg" /tmp/steward/packages || return 1;
+	grep -q "included-pkg" /tmp/steward/apt-packages || return 1;
 }
 
 test:include:missing-file() {
@@ -634,8 +634,8 @@ unguarded_func() {
 STEW
 	(cd "$SRC_DIR" && ./steward --dry-run "$tmpdir/Stewardfile") >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
 	rm -fR "$tmpdir";
-	grep -q "should-not-be-installed" /tmp/steward/packages 2>/dev/null && return 1;
-	grep -q "should-be-installed" /tmp/steward/packages || return 1;
+	grep -q "should-not-be-installed" /tmp/steward/apt-packages 2>/dev/null && return 1;
+	grep -q "should-be-installed" /tmp/steward/apt-packages || return 1;
 	return 0;
 }
 
@@ -651,7 +651,7 @@ guarded_func() {
 STEW
 	(cd "$SRC_DIR" && ./steward --dry-run --force "$tmpdir/Stewardfile") >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
 	rm -fR "$tmpdir";
-	grep -q "guarded-pkg" /tmp/steward/packages || return 1;
+	grep -q "guarded-pkg" /tmp/steward/apt-packages || return 1;
 }
 
 # Command Interface Tests (using --dry-run to avoid sudo)
@@ -664,8 +664,8 @@ test:cli:file-args() {
 	echo 'steward:apt pkg-from-file2' > "$tmp2";
 	(cd "$SRC_DIR" && ./steward --dry-run "$tmp1" "$tmp2") >/dev/null 2>&1 || return 1;
 	rm -f "$tmp1" "$tmp2";
-	grep -q "pkg-from-file1" /tmp/steward/packages || return 1;
-	grep -q "pkg-from-file2" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-file1" /tmp/steward/apt-packages || return 1;
+	grep -q "pkg-from-file2" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:pipe-cat() {
@@ -674,7 +674,7 @@ test:cli:pipe-cat() {
 	echo 'steward:apt pkg-from-pipe' > "$tmpfile";
 	cat "$tmpfile" | (cd "$SRC_DIR" && ./steward --dry-run) >/dev/null 2>&1 || return 1;
 	rm -f "$tmpfile";
-	grep -q "pkg-from-pipe" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-pipe" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:redirect-file() {
@@ -683,19 +683,19 @@ test:cli:redirect-file() {
 	echo 'steward:apt pkg-from-redirect' > "$tmpfile";
 	(cd "$SRC_DIR" && ./steward --dry-run < "$tmpfile") >/dev/null 2>&1 || return 1;
 	rm -f "$tmpfile";
-	grep -q "pkg-from-redirect" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-redirect" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:herestring() {
 	reset;
 	(cd "$SRC_DIR" && ./steward --dry-run <<<"steward:apt pkg-from-herestring") >/dev/null 2>&1 || return 1;
-	grep -q "pkg-from-herestring" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-herestring" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:process-substitution() {
 	reset;
 	(cd "$SRC_DIR" && ./steward --dry-run < <(echo "steward:apt pkg-from-procsub")) >/dev/null 2>&1 || return 1;
-	grep -q "pkg-from-procsub" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-procsub" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:heredoc() {
@@ -703,7 +703,7 @@ test:cli:heredoc() {
 	(cd "$SRC_DIR" && ./steward --dry-run <<STEW) >/dev/null 2>&1 || return 1;
 steward:apt pkg-from-heredoc
 STEW
-	grep -q "pkg-from-heredoc" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-heredoc" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:default-stewardfile() {
@@ -713,7 +713,7 @@ test:cli:default-stewardfile() {
 	ln -s "$SRC_DIR/.deps" "$tmpdir/.deps";
 	(cd "$tmpdir" && "$SRC_DIR/steward" --dry-run) >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
 	rm -fR "$tmpdir";
-	grep -q "pkg-from-default" /tmp/steward/packages || return 1;
+	grep -q "pkg-from-default" /tmp/steward/apt-packages || return 1;
 }
 
 test:cli:dry-run-no-exec() {
@@ -733,8 +733,8 @@ beta()  { steward:apt pkg-beta; }
 STEW
 	(cd "$SRC_DIR" && ./steward --dry-run --task alpha "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
 	rm -f "$tmpfile";
-	grep -q "pkg-alpha" /tmp/steward/packages || return 1;
-	grep -q "pkg-beta" /tmp/steward/packages 2>/dev/null && return 1;
+	grep -q "pkg-alpha" /tmp/steward/apt-packages || return 1;
+	grep -q "pkg-beta" /tmp/steward/apt-packages 2>/dev/null && return 1;
 	return 0;
 }
 
@@ -747,8 +747,8 @@ beta()  { steward:apt pkg-beta; }
 STEW
 	(cd "$SRC_DIR" && ./steward --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
 	rm -f "$tmpfile";
-	grep -q "pkg-alpha" /tmp/steward/packages || return 1;
-	grep -q "pkg-beta" /tmp/steward/packages || return 1;
+	grep -q "pkg-alpha" /tmp/steward/apt-packages || return 1;
+	grep -q "pkg-beta" /tmp/steward/apt-packages || return 1;
 }
 
 # Output
@@ -1047,7 +1047,7 @@ COPY steward /app/steward
 COPY .deps /app/.deps
 COPY Stewardfile /app/Stewardfile
 WORKDIR /app
-RUN bash ./steward --dry-run && test -f /tmp/steward/packages
+RUN bash ./steward --dry-run && test -f /tmp/steward/apt-packages
 DOCKERFILE
 
 	# Populate build context
@@ -1075,7 +1075,7 @@ COPY steward /app/steward
 COPY .deps /app/.deps
 COPY Stewardfile /app/Stewardfile
 WORKDIR /app
-RUN ./steward --dry-run && grep -q 'pkg-from-fifo-test' /tmp/steward/packages
+RUN ./steward --dry-run && grep -q 'pkg-from-fifo-test' /tmp/steward/apt-packages
 DOCKERFILE
 
 	# Populate build context
