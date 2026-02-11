@@ -175,6 +175,275 @@ test:ext:missing-url() {
 	return 0;
 }
 
+# steward:npm Tests
+#------------------------------------------------------------------------------
+
+test:npm:valid() {
+	reset;
+	steward:npm yarn || return 1;
+	grep -qP "^!global\tyarn$" /tmp/steward/npm-packages || return 1;
+}
+
+test:npm:versioned() {
+	reset;
+	steward:npm yarn@1.22.0 || return 1;
+	grep -qP "^!global\tyarn@1.22.0$" /tmp/steward/npm-packages || return 1;
+}
+
+test:npm:batched() {
+	reset;
+	steward:npm yarn || return 1;
+	steward:npm typescript || return 1;
+	grep -qP "^!global\t.*yarn.*typescript" /tmp/steward/npm-packages || return 1;
+	[[ $(wc -l < /tmp/steward/npm-packages) -eq 1 ]] || return 1;
+}
+
+test:npm:not-generated-if-unused() {
+	reset;
+	[[ ! -f /tmp/steward/npm-packages ]] || return 1;
+}
+
+test:npm:prereq-skipped-when-present() {
+	# npm is available in this environment — no key/src/packages should be generated
+	reset;
+	steward:npm is-odd || return 1;
+	[[ ! -f /tmp/steward/100--key-setup.sh ]] || return 1;
+	[[ ! -f /tmp/steward/110--src-setup.sh ]] || return 1;
+	[[ ! -f /tmp/steward/packages ]] || return 1;
+	# but the manifest should still be generated
+	[[ -f /tmp/steward/npm-packages ]] || return 1;
+}
+
+test:npm:local-dir() {
+	reset;
+	steward:npm --dir /app || return 1;
+	grep -qP "^/app\t$" /tmp/steward/npm-packages || return 1;
+}
+
+test:npm:local-dir-with-name() {
+	reset;
+	steward:npm --dir /app express || return 1;
+	grep -qP "^/app\texpress$" /tmp/steward/npm-packages || return 1;
+}
+
+test:npm:missing-name() {
+	reset;
+	steward:npm 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:composer Tests
+#------------------------------------------------------------------------------
+
+test:composer:valid() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	generated "php.*-cli" || return 1;
+	generated "getcomposer.org" || return 1;
+	grep -qP "^!global\tlaravel/installer$" /tmp/steward/composer-packages || return 1;
+}
+
+test:composer:versioned() {
+	reset;
+	steward:composer laravel/installer:^4.0 || return 1;
+	grep -qP "^!global\tlaravel/installer:\^4\.0$" /tmp/steward/composer-packages || return 1;
+}
+
+test:composer:batched() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	steward:composer phpstan/phpstan || return 1;
+	grep -qP "^!global\t.*laravel/installer.*phpstan/phpstan" /tmp/steward/composer-packages || return 1;
+	[[ $(wc -l < /tmp/steward/composer-packages) -eq 1 ]] || return 1;
+}
+
+test:composer:not-generated-if-unused() {
+	reset;
+	[[ ! -f /tmp/steward/composer-packages ]] || return 1;
+}
+
+test:composer:local-dir() {
+	reset;
+	steward:composer --dir /app || return 1;
+	grep -qP "^/app\t$" /tmp/steward/composer-packages || return 1;
+}
+
+test:composer:local-dir-with-name() {
+	reset;
+	steward:composer --dir /app laravel/installer || return 1;
+	grep -qP "^/app\tlaravel/installer$" /tmp/steward/composer-packages || return 1;
+}
+
+test:composer:missing-name() {
+	reset;
+	steward:composer 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:helm Tests
+#------------------------------------------------------------------------------
+
+test:helm:valid() {
+	reset;
+	steward:helm my-nginx bitnami/nginx || return 1;
+	generated "baltocdn.com/helm" || return 1;
+	generated "helm" || return 1;
+	generated "helm upgrade --install" || return 1;
+	generated "my-nginx" || return 1;
+	generated "bitnami/nginx" || return 1;
+	generated "wait-until" || return 1;
+}
+
+test:helm:with-repo() {
+	reset;
+	steward:helm my-nginx bitnami/nginx https://charts.bitnami.com/bitnami || return 1;
+	generated "helm repo add" || return 1;
+	generated "bitnami" || return 1;
+	generated "https://charts.bitnami.com/bitnami" || return 1;
+	generated "helm upgrade --install" || return 1;
+}
+
+test:helm:guard-once() {
+	reset;
+	steward:helm my-nginx bitnami/nginx || return 1;
+	steward:helm my-redis bitnami/redis || return 1;
+	[[ $(grep -c "helm upgrade --install" /tmp/steward/180--helm-install.sh) -eq 2 ]] || return 1;
+}
+
+test:helm:not-generated-if-unused() {
+	reset;
+	[[ ! -f /tmp/steward/180--helm-install.sh ]] || return 1;
+}
+
+test:helm:executes-upgrade() {
+	reset;
+	steward:helm my-nginx bitnami/nginx || return 1;
+	steward:helm my-redis bitnami/redis || return 1;
+	local log="$TEST_DIR/helm.log";
+	helm() { echo "helm $*" >> "$log"; }; export -f helm;
+	source /tmp/steward/180--helm-install.sh;
+	unset -f helm;
+	grep -q "helm upgrade --install my-nginx bitnami/nginx" "$log" || return 1;
+	grep -q "helm upgrade --install my-redis bitnami/redis" "$log" || return 1;
+}
+
+test:helm:executes-repo-add() {
+	reset;
+	steward:helm my-nginx bitnami/nginx https://charts.bitnami.com/bitnami || return 1;
+	local log="$TEST_DIR/helm.log";
+	helm() { echo "helm $*" >> "$log"; }; export -f helm;
+	source /tmp/steward/180--helm-install.sh;
+	unset -f helm;
+	grep -q "helm repo add bitnami https://charts.bitnami.com/bitnami" "$log" || return 1;
+	grep -q "helm repo update" "$log" || return 1;
+	grep -q "helm upgrade --install my-nginx bitnami/nginx" "$log" || return 1;
+}
+
+test:helm:missing-release() {
+	reset;
+	steward:helm 2>/dev/null && return 1;
+	return 0;
+}
+
+test:helm:missing-chart() {
+	reset;
+	steward:helm my-release 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:pip Tests
+#------------------------------------------------------------------------------
+
+test:pip:valid() {
+	reset;
+	steward:pip flask || return 1;
+	grep -qP "^!global\tflask$" /tmp/steward/pip-packages || return 1;
+}
+
+test:pip:versioned() {
+	reset;
+	steward:pip flask==3.0.0 || return 1;
+	grep -qP "^!global\tflask==3\.0\.0$" /tmp/steward/pip-packages || return 1;
+}
+
+test:pip:batched() {
+	reset;
+	steward:pip flask || return 1;
+	steward:pip requests || return 1;
+	grep -qP "^!global\t.*flask.*requests" /tmp/steward/pip-packages || return 1;
+	[[ $(wc -l < /tmp/steward/pip-packages) -eq 1 ]] || return 1;
+}
+
+test:pip:not-generated-if-unused() {
+	reset;
+	[[ ! -f /tmp/steward/pip-packages ]] || return 1;
+}
+
+test:pip:local-dir() {
+	reset;
+	steward:pip --dir /app || return 1;
+	grep -qP "^/app\t$" /tmp/steward/pip-packages || return 1;
+}
+
+test:pip:local-dir-with-name() {
+	reset;
+	steward:pip --dir /app flask || return 1;
+	grep -qP "^/app\tflask$" /tmp/steward/pip-packages || return 1;
+}
+
+test:pip:missing-name() {
+	reset;
+	steward:pip 2>/dev/null && return 1;
+	return 0;
+}
+
+# steward:go Tests
+#------------------------------------------------------------------------------
+
+test:go:valid() {
+	reset;
+	steward:go golang.org/x/tools/gopls || return 1;
+	grep -qP "^!global\tgolang.org/x/tools/gopls@latest$" /tmp/steward/go-packages || return 1;
+}
+
+test:go:versioned() {
+	reset;
+	steward:go golang.org/x/tools/gopls@v0.15.0 || return 1;
+	grep -qP "^!global\tgolang.org/x/tools/gopls@v0\.15\.0$" /tmp/steward/go-packages || return 1;
+	! grep -q "@latest" /tmp/steward/go-packages || return 1;
+}
+
+test:go:batched() {
+	reset;
+	steward:go golang.org/x/tools/gopls || return 1;
+	steward:go github.com/golangci/golangci-lint/cmd/golangci-lint || return 1;
+	grep -qP "^!global\t.*gopls@latest.*golangci-lint@latest" /tmp/steward/go-packages || return 1;
+	[[ $(wc -l < /tmp/steward/go-packages) -eq 1 ]] || return 1;
+}
+
+test:go:not-generated-if-unused() {
+	reset;
+	[[ ! -f /tmp/steward/go-packages ]] || return 1;
+}
+
+test:go:local-dir() {
+	reset;
+	steward:go --dir /app || return 1;
+	grep -qP "^/app\t$" /tmp/steward/go-packages || return 1;
+}
+
+test:go:local-dir-with-name() {
+	reset;
+	steward:go --dir /app github.com/some/pkg || return 1;
+	grep -qP "^/app\tgithub.com/some/pkg@latest$" /tmp/steward/go-packages || return 1;
+}
+
+test:go:missing-name() {
+	reset;
+	steward:go 2>/dev/null && return 1;
+	return 0;
+}
+
 # steward:eager Tests
 #------------------------------------------------------------------------------
 
@@ -550,6 +819,78 @@ Scenario    | Invocation                  | Expected        | ✓/✗
 valid       | ext https://get.docker.com  | URL in output   | $(t ext:valid)
 with-shell  | ext https://example.com sh  | shell in output | $(t ext:with-shell)
 missing-url | ext                         | error           | $(t ext:missing-url)
+
+---
+
+## steward:npm
+
+Scenario      | Invocation          | Expected                  | ✓/✗
+--------------|---------------------|---------------------------|----
+valid         | npm yarn            | yarn in manifest          | $(t npm:valid)
+versioned     | npm yarn@1.22.0     | version preserved         | $(t npm:versioned)
+batched       | npm a; npm b        | 2 entries in manifest     | $(t npm:batched)
+unused        | (no npm calls)      | no manifest generated     | $(t npm:not-generated-if-unused)
+prereq-skip   | npm x (npm exists)  | no prereqs generated      | $(t npm:prereq-skipped-when-present)
+local-dir     | npm --dir /app      | cd + npm install          | $(t npm:local-dir)
+local-dir+pkg | npm --dir /app expr | cd + npm install expr     | $(t npm:local-dir-with-name)
+missing-name  | npm                 | error                     | $(t npm:missing-name)
+
+---
+
+## steward:composer
+
+Scenario      | Invocation                     | Expected                    | ✓/✗
+--------------|--------------------------------|-----------------------------|----
+valid         | composer laravel/installer     | name in manifest + prereqs  | $(t composer:valid)
+versioned     | composer laravel/installer:^4  | version preserved           | $(t composer:versioned)
+batched       | composer a; composer b         | 2 entries in manifest       | $(t composer:batched)
+unused        | (no composer calls)            | no manifest generated       | $(t composer:not-generated-if-unused)
+local-dir     | composer --dir /app            | cd + composer install       | $(t composer:local-dir)
+local-dir+pkg | composer --dir /app pkg        | cd + composer require pkg   | $(t composer:local-dir-with-name)
+missing-name  | composer                       | error                       | $(t composer:missing-name)
+
+---
+
+## steward:helm
+
+Scenario        | Invocation                              | Expected                     | ✓/✗
+----------------|-----------------------------------------|------------------------------|----
+valid           | helm my-nginx bitnami/nginx             | helm upgrade --install       | $(t helm:valid)
+with-repo       | helm my-nginx bitnami/nginx https://... | repo add + upgrade --install | $(t helm:with-repo)
+guard-once      | helm a x; helm b y                      | single prerequisite check    | $(t helm:guard-once)
+unused          | (no helm calls)                         | no script generated          | $(t helm:not-generated-if-unused)
+exec-upgrade    | helm a x; helm b y                      | stub receives both           | $(t helm:executes-upgrade)
+exec-repo-add   | helm a b/c https://...                  | stub gets repo add + upgrade | $(t helm:executes-repo-add)
+missing-release | helm                                    | error                        | $(t helm:missing-release)
+missing-chart   | helm my-release                         | error                        | $(t helm:missing-chart)
+
+---
+
+## steward:pip
+
+Scenario      | Invocation               | Expected                  | ✓/✗
+--------------|--------------------------|---------------------------|----
+valid         | pip flask                | flask in manifest         | $(t pip:valid)
+versioned     | pip flask==3.0.0         | version preserved         | $(t pip:versioned)
+batched       | pip a; pip b             | 2 entries in manifest     | $(t pip:batched)
+unused        | (no pip calls)           | no manifest generated     | $(t pip:not-generated-if-unused)
+local-dir     | pip --dir /app           | venv + requirements.txt   | $(t pip:local-dir)
+local-dir+pkg | pip --dir /app flask     | venv + pip install flask  | $(t pip:local-dir-with-name)
+missing-name  | pip                      | error                     | $(t pip:missing-name)
+
+---
+
+## steward:go
+
+Scenario      | Invocation                  | Expected                  | ✓/✗
+--------------|-----------------------------|---------------------------|----
+valid         | go golang.org/x/tools/gopls | @latest in manifest       | $(t go:valid)
+versioned     | go tool@v0.15.0             | version preserved         | $(t go:versioned)
+batched       | go a; go b                  | 2 entries in manifest     | $(t go:batched)
+unused        | (no go calls)               | no manifest generated     | $(t go:not-generated-if-unused)
+local-dir     | go --dir /app              | cd + go mod download      | $(t go:local-dir)
+local-dir+pkg | go --dir /app pkg           | cd + go get pkg@latest    | $(t go:local-dir-with-name)
+missing-name  | go                          | error                     | $(t go:missing-name)
 
 ---
 

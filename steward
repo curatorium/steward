@@ -318,6 +318,163 @@ function steward:ext() {
 	SH
 }
 
+# @name npm
+# @type keyword
+# @desc Install npm packages (global by default, local with --dir)
+#
+# @usage npm <name[@version]>
+# @usage npm --dir <path> [name[@version]]
+#
+# @opt  [--dir <path>] -- Project directory. Without name: `npm install`. With name: `npm install <name>`.
+# @arg  [name[@version]] -- Package name, optionally with @version suffix. Without --dir: global install.
+function steward:npm() {
+	local ARGS=("$@");
+	local dir=; args:opt dir "";
+	local name=; args:arg -o name;
+
+	[[ -z "$dir" && -z "$name" ]] && return 1;
+
+	[[ ! -f /tmp/steward/npm-packages ]] && ! command -v npm >/dev/null 2>&1 && {
+		if [[ -n "${NODEVS:-}" ]]; then
+			steward:key nodesource https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key;
+			steward:src nodesource "https://deb.nodesource.com/node_${NODEVS}.x" nodistro main;
+			steward:apt nodejs;
+		else
+			steward:apt nodejs;
+		fi
+	}
+
+	local key="${dir:-!global}";
+	grep -q "^${key}	" /tmp/steward/npm-packages 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/npm-packages \
+		|| printf '%s\t%s\n' "$key" "$name" >> /tmp/steward/npm-packages;
+}
+
+# @name composer
+# @type keyword
+# @desc Install composer packages (global by default, local with --dir)
+#
+# @usage composer <name[:version]>
+# @usage composer --dir <path> [name[:version]]
+#
+# @opt  [--dir <path>] -- Project directory. Without name: `composer install`. With name: `composer require <name>`.
+# @arg  [name[:version]] -- Package name, optionally with :version constraint. Without --dir: global require.
+function steward:composer() {
+	local ARGS=("$@");
+	local dir=; args:opt dir "";
+	local name=; args:arg -o name;
+
+	[[ -z "$dir" && -z "$name" ]] && return 1;
+
+	[[ ! -f /tmp/steward/composer-packages ]] && ! command -v php >/dev/null 2>&1 && {
+		[[ "${ID:-}" == "debian" ]] \
+			&& steward:key php https://packages.sury.org/php/apt.gpg \
+			&& steward:src php "https://packages.sury.org/php/" "$VERSION_CODENAME" main;
+		[[ "${ID:-}" == "ubuntu" ]] \
+			&& steward:key php "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6" \
+			&& steward:src php "https://ppa.launchpadcontent.net/ondrej/php/ubuntu" "$VERSION_CODENAME" main;
+		steward:apt "php${PHPVS:-}-cli";
+		steward:ext https://getcomposer.org/installer php -- --2 --install-dir=/usr/local/bin --filename=composer;
+	}
+
+	local key="${dir:-!global}";
+	grep -q "^${key}	" /tmp/steward/composer-packages 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/composer-packages \
+		|| printf '%s\t%s\n' "$key" "$name" >> /tmp/steward/composer-packages;
+}
+
+# @name helm
+# @type keyword
+# @desc Install a Helm chart
+#
+# @usage helm <release> <chart> [repo]
+#
+# @arg <release> -- Release name
+# @arg <chart> -- Chart reference (e.g. nginx, bitnami/nginx)
+# @arg [repo] -- Repository URL to add (chart arg used as repo name)
+function steward:helm() {
+	local ARGS=("$@");
+	local release=; args:arg release || return;
+	local chart=;   args:arg chart || return;
+	local repo=;    args:arg -o repo '^https?://';
+
+	[[ ! -f /tmp/steward/180--helm-install.sh ]] && {
+		! command -v helm >/dev/null 2>&1 && {
+			steward:key helm https://baltocdn.com/helm/signing.asc;
+			steward:src helm "https://baltocdn.com/helm/stable/debian/" all main;
+			steward:apt helm;
+		}
+		! command -v wait-until >/dev/null 2>&1 && \
+			steward:bin wait-until https://raw.githubusercontent.com/nickjj/wait-until/v0.3.0/wait-until;
+	}
+
+	if [[ -n "$repo" ]]; then
+		local repo_name="${chart%%/*}";
+		cat <<-SH >> /tmp/steward/180--helm-install.sh
+			helm repo add '$repo_name' '$repo';
+			helm repo update;
+		SH
+	fi
+
+	cat <<-SH >> /tmp/steward/180--helm-install.sh
+		helm upgrade --install '$release' '$chart';
+	SH
+}
+
+# @name pip
+# @type keyword
+# @desc Install pip packages (global by default, local venv with --dir)
+#
+# @usage pip <name[==version]>
+# @usage pip --dir <path> [name[==version]]
+#
+# @opt  [--dir <path>] -- Project directory. Without name: venv + `pip install -r requirements.txt`. With name: venv + `pip install <name>`.
+# @arg  [name[==version]] -- Package name, optionally with ==version constraint. Without --dir: global install.
+function steward:pip() {
+	local ARGS=("$@");
+	local dir=; args:opt dir "";
+	local name=; args:arg -o name;
+
+	[[ -z "$dir" && -z "$name" ]] && return 1;
+
+	[[ ! -f /tmp/steward/pip-packages ]] && ! command -v pip3 >/dev/null 2>&1 && {
+		steward:apt --temp python3-pip python3-venv;
+	}
+
+	local key="${dir:-!global}";
+	grep -q "^${key}	" /tmp/steward/pip-packages 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/pip-packages \
+		|| printf '%s\t%s\n' "$key" "$name" >> /tmp/steward/pip-packages;
+}
+
+# @name go
+# @type keyword
+# @desc Install Go packages (global by default, local with --dir)
+#
+# @usage go <name[@version]>
+# @usage go --dir <path> [name[@version]]
+#
+# @opt  [--dir <path>] -- Project directory. Without name: `go mod download`. With name: `go get <name>`.
+# @arg  [name[@version]] -- Module path, optionally with @version (default: @latest). Without --dir: global install.
+function steward:go() {
+	local ARGS=("$@");
+	local dir=; args:opt dir "";
+	local name=; args:arg -o name;
+
+	[[ -z "$dir" && -z "$name" ]] && return 1;
+
+	[[ ! -f /tmp/steward/go-packages ]] && ! command -v go >/dev/null 2>&1 && {
+		steward:apt golang;
+	}
+
+	[[ -n "$name" && "$name" != *@* ]] && name="${name}@latest";
+
+	local key="${dir:-!global}";
+	grep -q "^${key}	" /tmp/steward/go-packages 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/go-packages \
+		|| printf '%s\t%s\n' "$key" "$name" >> /tmp/steward/go-packages;
+}
+
 # @name eager
 # @type keyword
 # @desc Run shell commands before the built-in pipeline (eager scripts: 0-99)
@@ -460,6 +617,31 @@ function steward:apply() {
 		findmnt /var/cache/steward || rm -fr /var/cache/steward;  # Only clean if it wasn't mounted (as a cache)
 	SH
 	fi
+
+	# Generate install scripts from package manager manifests (dir\tpackages per line)
+	[[ -f /tmp/steward/npm-packages ]] && while IFS=$'\t' read -r dir pkgs; do
+		[[ "$dir" == "!global" ]] && echo "npm install --global $pkgs;" >> "/tmp/steward/160--npm-install.sh" && continue;
+		[[ -z "$pkgs" ]]          && echo "(cd '$dir' && npm install);" >> "/tmp/steward/160--npm-install.sh" && continue;
+		echo "(cd '$dir' && npm install $pkgs);" >> "/tmp/steward/160--npm-install.sh";
+	done < /tmp/steward/npm-packages
+
+	[[ -f /tmp/steward/composer-packages ]] && while IFS=$'\t' read -r dir pkgs; do
+		[[ "$dir" == "!global" ]] && echo "composer global require $pkgs;" >> "/tmp/steward/170--composer-install.sh" && continue;
+		[[ -z "$pkgs" ]]          && echo "(cd '$dir' && composer install);" >> "/tmp/steward/170--composer-install.sh" && continue;
+		echo "(cd '$dir' && composer require $pkgs);" >> "/tmp/steward/170--composer-install.sh";
+	done < /tmp/steward/composer-packages
+
+	[[ -f /tmp/steward/pip-packages ]] && while IFS=$'\t' read -r dir pkgs; do
+		[[ "$dir" == "!global" ]] && echo "pip3 install $pkgs;" >> "/tmp/steward/190--pip-install.sh" && continue;
+		[[ -z "$pkgs" ]]          && echo "(cd '$dir' && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt);" >> "/tmp/steward/190--pip-install.sh" && continue;
+		echo "(cd '$dir' && python3 -m venv .venv && .venv/bin/pip install $pkgs);" >> "/tmp/steward/190--pip-install.sh";
+	done < /tmp/steward/pip-packages
+
+	[[ -f /tmp/steward/go-packages ]] && while IFS=$'\t' read -r dir pkgs; do
+		[[ "$dir" == "!global" ]] && echo "for pkg in $pkgs; do go install \"\$pkg\"; done;" >> "/tmp/steward/195--go-install.sh" && continue;
+		[[ -z "$pkgs" ]]          && echo "(cd '$dir' && go mod download);" >> "/tmp/steward/195--go-install.sh" && continue;
+		echo "(cd '$dir' && go get $pkgs);" >> "/tmp/steward/195--go-install.sh";
+	done < /tmp/steward/go-packages
 
 	# shellcheck source=/dev/null # We do not depend on the symbols inside this script
 	for script in /tmp/steward/[0-9][0-9][0-9]-*.sh; do
