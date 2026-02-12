@@ -387,37 +387,50 @@ function steward:composer() {
 # @type keyword
 # @desc Install a Helm chart
 #
-# @usage helm <release> <chart> [repo]
+# @usage helm [namespace/]<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]
 #
-# @arg <release> -- Release name
-# @arg <chart> -- Chart reference (e.g. nginx, bitnami/nginx)
-# @arg [repo] -- Repository URL to add (chart arg used as repo name)
+# @arg  [namespace/]<release> -- Release name, optionally prefixed with namespace/
+# @arg  <chart[@version]> -- Chart reference (e.g. bitnami/nginx@1.2.3)
+# @arg  [repo] -- Repository URL to add (chart prefix used as repo name)
+# @opt  [--timeout <seconds>] -- Helm timeout in seconds (default: 60)
 function steward:helm() {
 	local ARGS=("$@");
-	local release=; args:arg release || return;
-	local chart=;   args:arg chart || return;
-	local repo=;    args:arg -o repo '^https?://';
+	local release=;  args:arg release || return;
+	local chart=;    args:arg chart || return;
+	local repo=;     args:arg -o repo '^https?://';
+	local timeout=;  args:opt timeout "";
 
-	[[ ! -f /tmp/steward/180--helm-install.sh ]] && {
-		! command -v helm >/dev/null 2>&1 && {
-			steward:key helm https://baltocdn.com/helm/signing.asc;
-			steward:src helm "https://baltocdn.com/helm/stable/debian/" all main;
-			steward:apt helm;
-		}
-		! command -v wait-until >/dev/null 2>&1 && \
-			steward:bin wait-until https://raw.githubusercontent.com/nickjj/wait-until/v0.3.0/wait-until;
+	[[ ! -f /tmp/steward/180--helm-install.sh ]] && ! command -v helm >/dev/null 2>&1 && {
+		steward:key helm https://packages.buildkite.com/helm-linux/helm-debian/gpgkey;
+		steward:src helm https://packages.buildkite.com/helm-linux/helm-debian/any/ any main;
+		steward:apt helm;
 	}
 
+	# Extract namespace from release (namespace/release → --namespace namespace)
+	local namespace=;
+	[[ "$release" == */* ]] && namespace="${release%%/*}" && release="${release##*/}";
+
+	# Extract version from chart (chart@version → --version version)
+	local version=;
+	[[ "$chart" == *@* ]] && version="${chart##*@}" && chart="${chart%%@*}";
+
 	if [[ -n "$repo" ]]; then
-		local repo_name="${chart%%/*}";
 		cat <<-SH >> /tmp/steward/180--helm-install.sh
-			helm repo add '$repo_name' '$repo';
+			helm repo add '${chart%%/*}' '$repo';
 			helm repo update;
 		SH
 	fi
 
+	# Accept YAML values from stdin if provided
+	local values=;
+	[[ ! -t 0 ]] && values="$(cat)" 2>/dev/null;
+
 	cat <<-SH >> /tmp/steward/180--helm-install.sh
-		helm upgrade --install '$release' '$chart';
+		helm upgrade --install '$release' '$chart' \
+			--atomic --wait --timeout '${timeout:-60}s' \
+			${namespace:+--namespace '$namespace' --create-namespace} \
+			${version:+--version '$version'} \
+			${values:+--values - <<< '$values'};
 	SH
 }
 

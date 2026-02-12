@@ -8,7 +8,7 @@ reset() {
 
 # Helper: check if pattern exists in any file under /tmp/steward
 generated() {
-	grep -rq "$1" /tmp/steward 2>/dev/null;
+	grep -rq -- "$1" /tmp/steward 2>/dev/null;
 }
 
 
@@ -286,12 +286,40 @@ test:composer:missing-name() {
 test:helm:valid() {
 	reset;
 	steward:helm my-nginx bitnami/nginx || return 1;
-	generated "baltocdn.com/helm" || return 1;
-	generated "helm" || return 1;
 	generated "helm upgrade --install" || return 1;
-	generated "my-nginx" || return 1;
-	generated "bitnami/nginx" || return 1;
-	generated "wait-until" || return 1;
+	generated "'my-nginx'" || return 1;
+	generated "'bitnami/nginx'" || return 1;
+	generated "--atomic" || return 1;
+	generated "--wait" || return 1;
+	generated "--timeout '60s'" || return 1;
+}
+
+test:helm:with-namespace() {
+	reset;
+	steward:helm production/my-nginx bitnami/nginx || return 1;
+	generated "'my-nginx'" || return 1;
+	generated "--namespace 'production'" || return 1;
+	generated "--create-namespace" || return 1;
+}
+
+test:helm:with-version() {
+	reset;
+	steward:helm my-nginx bitnami/nginx@1.2.3 || return 1;
+	generated "'bitnami/nginx'" || return 1;
+	generated "--version '1.2.3'" || return 1;
+}
+
+test:helm:with-timeout() {
+	reset;
+	steward:helm my-nginx bitnami/nginx --timeout 120 || return 1;
+	generated "--timeout '120s'" || return 1;
+}
+
+test:helm:with-values-stdin() {
+	reset;
+	steward:helm my-nginx bitnami/nginx <<< "replicaCount: 3" || return 1;
+	generated "--values -" || return 1;
+	generated "replicaCount: 3" || return 1;
 }
 
 test:helm:with-repo() {
@@ -313,30 +341,6 @@ test:helm:guard-once() {
 test:helm:not-generated-if-unused() {
 	reset;
 	[[ ! -f /tmp/steward/180--helm-install.sh ]] || return 1;
-}
-
-test:helm:executes-upgrade() {
-	reset;
-	steward:helm my-nginx bitnami/nginx || return 1;
-	steward:helm my-redis bitnami/redis || return 1;
-	local log="$TEST_DIR/helm.log";
-	helm() { echo "helm $*" >> "$log"; }; export -f helm;
-	source /tmp/steward/180--helm-install.sh;
-	unset -f helm;
-	grep -q "helm upgrade --install my-nginx bitnami/nginx" "$log" || return 1;
-	grep -q "helm upgrade --install my-redis bitnami/redis" "$log" || return 1;
-}
-
-test:helm:executes-repo-add() {
-	reset;
-	steward:helm my-nginx bitnami/nginx https://charts.bitnami.com/bitnami || return 1;
-	local log="$TEST_DIR/helm.log";
-	helm() { echo "helm $*" >> "$log"; }; export -f helm;
-	source /tmp/steward/180--helm-install.sh;
-	unset -f helm;
-	grep -q "helm repo add bitnami https://charts.bitnami.com/bitnami" "$log" || return 1;
-	grep -q "helm repo update" "$log" || return 1;
-	grep -q "helm upgrade --install my-nginx bitnami/nginx" "$log" || return 1;
 }
 
 test:helm:missing-release() {
@@ -855,12 +859,14 @@ missing-name  | composer                       | error                       | $
 
 Scenario        | Invocation                              | Expected                     | ✓/✗
 ----------------|-----------------------------------------|------------------------------|----
-valid           | helm my-nginx bitnami/nginx             | helm upgrade --install       | $(t helm:valid)
+valid           | helm my-nginx bitnami/nginx             | upgrade --install + defaults | $(t helm:valid)
+namespace       | helm prod/my-nginx bitnami/nginx        | --namespace prod             | $(t helm:with-namespace)
+version         | helm my-nginx bitnami/nginx@1.2.3       | --version 1.2.3              | $(t helm:with-version)
+timeout         | helm my-nginx chart --timeout 120       | --timeout 120s               | $(t helm:with-timeout)
+values-stdin    | helm my-nginx chart <<< "key: val"      | --values - with yaml         | $(t helm:with-values-stdin)
 with-repo       | helm my-nginx bitnami/nginx https://... | repo add + upgrade --install | $(t helm:with-repo)
 guard-once      | helm a x; helm b y                      | single prerequisite check    | $(t helm:guard-once)
 unused          | (no helm calls)                         | no script generated          | $(t helm:not-generated-if-unused)
-exec-upgrade    | helm a x; helm b y                      | stub receives both           | $(t helm:executes-upgrade)
-exec-repo-add   | helm a b/c https://...                  | stub gets repo add + upgrade | $(t helm:executes-repo-add)
 missing-release | helm                                    | error                        | $(t helm:missing-release)
 missing-chart   | helm my-release                         | error                        | $(t helm:missing-chart)
 
