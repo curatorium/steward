@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>name</key>
+	<string>Stewardfile</string>
+	<key>scopeName</key>
+	<string>source.stewardfile</string>
+	<key>fileTypes</key>
+	<array>
+		<string>Stewardfile</string>
+	</array>
+	<key>patterns</key>
+	<array>
+
+		<!-- Comments -->
+		<dict>
+			<key>match</key>
+			<string>#.*$</string>
+			<key>name</key>
+			<string>comment.line.number-sign.stewardfile</string>
+		</dict>
+
+		<!-- Task / function definitions -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(task|function)\s+([A-Za-z_][A-Za-z0-9_:-]*)\s*\(\)</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>storage.type.function.stewardfile</string>
+				</dict>
+				<key>2</key>
+				<dict>
+					<key>name</key>
+					<string>entity.name.function.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Bare task definitions: identifier() { without keyword -->
+		<dict>
+			<key>match</key>
+			<string>^([A-Za-z_][A-Za-z0-9_:-]*)\s*\(\)</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>entity.name.function.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Package manager keywords (take name[@version] args) -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(apt|deb|npm|composer|pip|go)\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>keyword.other.package.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Installer keywords -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(key|src|bin|ext|tarball|zipball|helm)\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>keyword.other.installer.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Flow control keywords -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(eager|hook|defer)\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>keyword.control.pipeline.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Guard and include -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(guard|include)\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>keyword.control.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Conditional wrappers -->
+		<dict>
+			<key>match</key>
+			<string>(?:^|\s)(on-amd64|on-arm64|in-dev)\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>keyword.control.conditional.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Flags -->
+		<dict>
+			<key>match</key>
+			<string>(?:\s)(--(?:try|temp|keep|no-key|dir|file|force|dry-run|before|after|timeout))\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>constant.language.flag.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Ordinals :NN -->
+		<dict>
+			<key>match</key>
+			<string>(?:\s)(:[0-9]{2})\b</string>
+			<key>captures</key>
+			<dict>
+				<key>1</key>
+				<dict>
+					<key>name</key>
+					<string>constant.numeric.ordinal.stewardfile</string>
+				</dict>
+			</dict>
+		</dict>
+
+		<!-- Version pinning @version (in package names) -->
+		<dict>
+			<key>match</key>
+			<string>(@[A-Za-z0-9._^~>=&lt;!*-]+)</string>
+			<key>name</key>
+			<string>constant.other.version.stewardfile</string>
+		</dict>
+
+		<!-- URLs -->
+		<dict>
+			<key>match</key>
+			<string>https?://[^\s'"&gt;)]+</string>
+			<key>name</key>
+			<string>string.other.link.stewardfile</string>
+		</dict>
+
+		<!-- Heredoc start (<<SH, <<-SH, <<'SH', <<<'...' etc.) -->
+		<dict>
+			<key>begin</key>
+			<string>&lt;&lt;-?\s*'?(\w+)'?\s*$</string>
+			<key>end</key>
+			<string>^\s*\1\s*$</string>
+			<key>name</key>
+			<string>string.unquoted.heredoc.stewardfile</string>
+			<key>contentName</key>
+			<string>source.shell.embedded.stewardfile</string>
+			<key>patterns</key>
+			<array>
+				<dict>
+					<key>include</key>
+					<string>source.shell</string>
+				</dict>
+			</array>
+		</dict>
+
+		<!-- Herestring <<< -->
+		<dict>
+			<key>match</key>
+			<string>&lt;&lt;&lt;</string>
+			<key>name</key>
+			<string>keyword.operator.herestring.stewardfile</string>
+		</dict>
+
+		<!-- Double-quoted strings -->
+		<dict>
+			<key>begin</key>
+			<string>"</string>
+			<key>end</key>
+			<string>"</string>
+			<key>name</key>
+			<string>string.quoted.double.stewardfile</string>
+			<key>patterns</key>
+			<array>
+				<dict>
+					<key>match</key>
+					<string>\\.</string>
+					<key>name</key>
+					<string>constant.character.escape.stewardfile</string>
+				</dict>
+				<dict>
+					<key>include</key>
+					<string>#variables</string>
+				</dict>
+			</array>
+		</dict>
+
+		<!-- Single-quoted strings -->
+		<dict>
+			<key>begin</key>
+			<string>'</string>
+			<key>end</key>
+			<string>'</string>
+			<key>name</key>
+			<string>string.quoted.single.stewardfile</string>
+		</dict>
+
+		<!-- Variables -->
+		<dict>
+			<key>include</key>
+			<string>#variables</string>
+		</dict>
+
+		<!-- Fall through to shell grammar for everything else -->
+		<dict>
+			<key>include</key>
+			<string>source.shell</string>
+		</dict>
+
+	</array>
+
+	<!-- Repository patterns -->
+	<key>repository</key>
+	<dict>
+		<key>variables</key>
+		<dict>
+			<key>patterns</key>
+			<array>
+				<!-- $VARIABLE or ${VARIABLE} -->
+				<dict>
+					<key>match</key>
+					<string>\$[A-Za-z_][A-Za-z0-9_]*</string>
+					<key>name</key>
+					<string>variable.other.stewardfile</string>
+				</dict>
+				<dict>
+					<key>begin</key>
+					<string>\$\{</string>
+					<key>end</key>
+					<string>\}</string>
+					<key>name</key>
+					<string>variable.other.bracket.stewardfile</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+</dict>
+</plist>

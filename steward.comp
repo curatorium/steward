@@ -1,0 +1,66 @@
+#!/usr/bin/bash
+# Copyright (c) 2026 Mihai Stancu (https://github.com/curatorium)
+
+#
+# Bash completions for steward
+# Completes flags, options, file arguments, task names, and keyword names.
+#
+
+steward:completions() {
+  local cur="${COMP_WORDS[COMP_CWORD]}";
+  local prev="${COMP_WORDS[COMP_CWORD-1]:-}";
+
+  # Option-value completions: complete the value after a flag that expects one
+  case "$prev" in
+    -t|--task)
+      steward:completions::tasks "$cur";
+      return;;
+    -x|--trace)
+      COMPREPLY=($(compgen -W "app all" -- "$cur"));
+      return;;
+    -n|--namespace)
+      return;;  # free-form, no completions
+  esac
+
+  # Flag/option completions: anything starting with -
+  if [[ "$cur" == -* ]]; then
+    local flags="-n --namespace -t --task -f --force -d --dry-run -x --trace -h --help";
+    COMPREPLY=($(compgen -W "$flags" -- "$cur"));
+    return;
+  fi
+
+  # Default: complete file paths (Stewardfile*, *.Stewardfile, directories)
+  steward:completions::files "$cur";
+}
+
+steward:completions::tasks() {
+  local cur="$1";
+  local tasks;
+
+  # Extract task/function names from Stewardfile(s) in the current directory
+  tasks=$(
+    for f in Stewardfile Stewardfile.dist; do
+      [[ -f "$f" ]] && grep -oP '(?:^task\s+|^function\s+)\K[A-Za-z_][A-Za-z0-9_:-]*' "$f" 2>/dev/null;
+    done
+  );
+  COMPREPLY=($(compgen -W "$tasks" -- "$cur"));
+}
+
+steward:completions::files() {
+  local cur="$1";
+
+  # Complete Stewardfile*, *.Stewardfile, and directories (for navigation)
+  COMPREPLY=($(compgen -f -X '!Stewardfile*' -- "$cur"));
+  COMPREPLY+=($(compgen -f -X '!*.Stewardfile' -- "$cur"));
+  COMPREPLY+=($(compgen -d -- "$cur"));
+
+  # Deduplicate
+  local -A seen;
+  local unique=();
+  for r in "${COMPREPLY[@]}"; do
+    [[ -z "${seen[$r]+x}" ]] && seen[$r]=1 && unique+=("$r");
+  done
+  COMPREPLY=("${unique[@]}");
+}
+
+complete -F steward:completions steward;
