@@ -561,8 +561,8 @@ test:eager:base-range() {
 
 test:eager:no-name() {
 	reset;
-	steward:eager <<<"echo anonymous";
-	generated "echo anonymous" || return 1;
+	steward:eager <<<"echo anonymous" 2>/dev/null && return 1;
+	return 0;
 }
 
 # steward:hook Tests
@@ -602,8 +602,8 @@ test:hook:unknown-anchor() {
 
 test:hook:no-name() {
 	reset;
-	steward:hook --before apt <<<"echo anonymous";
-	generated "echo anonymous" || return 1;
+	steward:hook --before apt <<<"echo anonymous" 2>/dev/null && return 1;
+	return 0;
 }
 
 # steward:defer Tests
@@ -624,8 +624,8 @@ test:defer:custom-order() {
 
 test:defer:no-name() {
 	reset;
-	steward:defer <<<"echo anonymous";
-	generated "echo anonymous" || return 1;
+	steward:defer <<<"echo anonymous" 2>/dev/null && return 1;
+	return 0;
 }
 
 # steward:on-amd64 / steward:on-arm64 Tests
@@ -1064,7 +1064,7 @@ Scenario      | Invocation                          | Expected                  
 valid         | eager setup <<<"echo hello"         | content in 0-00-eager-*   | $(t eager:valid)
 custom-order  | eager :50 early <<<"x"              | 0-50-eager-* created      | $(t eager:custom-order)
 base-range    | eager :99 max <<<"x"                  | 0-99-eager-* created      | $(t eager:base-range)
-no-name       | eager <<<"x"                        | content captured          | $(t eager:no-name)
+no-name       | eager <<<"x"                        | rejects (name required)   | $(t eager:no-name)
 
 ---
 
@@ -1077,7 +1077,7 @@ after-anchor    | hook --after composer name <<<"x"         | hook-after-compose
 before-apt      | hook --before apt name <<<"x"             | hook-before-apt-* created | $(t hook:before-apt)
 after-go        | hook --after go name <<<"x"               | hook-after-go-* created   | $(t hook:after-go)
 unknown-anchor  | hook --before nonexistent <<<"x"          | error                     | $(t hook:unknown-anchor)
-no-name         | hook --before apt <<<"x"                  | content captured          | $(t hook:no-name)
+no-name         | hook --before apt <<<"x"                  | rejects (name required)   | $(t hook:no-name)
 
 ---
 
@@ -1087,7 +1087,7 @@ Scenario     | Invocation                   | Expected                   | âœ“/â
 -------------|------------------------------|----------------------------|----
 valid        | defer setup <<<"echo hello"  | content in 2-00-deferred-* | $(t defer:valid)
 custom-order | defer :50 early <<<"x"       | 2-50-deferred-* created    | $(t defer:custom-order)
-no-name      | defer <<<"x"                 | content captured           | $(t defer:no-name)
+no-name      | defer <<<"x"                 | rejects (name required)    | $(t defer:no-name)
 
 ---
 
