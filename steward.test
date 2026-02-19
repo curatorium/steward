@@ -154,12 +154,12 @@ test:bin:missing-url() {
 	return 0;
 }
 
-# steward:tarball Tests
+# steward:tar Tests
 #------------------------------------------------------------------------------
 
-test:tarball:valid() {
+test:tar:valid() {
 	reset;
-	steward:tarball mytool path/to/bin https://example.com/tool.tgz || return 1;
+	steward:tar mytool path/to/bin https://example.com/tool.tgz || return 1;
 	generated "curl" || return 1;
 	generated "example.com" || return 1;
 	generated "tar xzf" || return 1;
@@ -167,48 +167,48 @@ test:tarball:valid() {
 	generated "/usr/local/bin/mytool" || return 1;
 	generated "mktemp -d" || return 1;
 	generated 'rm -fR' || return 1;
-	[[ -f /tmp/steward/160--tarball-install.sh ]] || return 1;
+	[[ -f /tmp/steward/1-07-internal-tar-install.sh ]] || return 1;
 }
 
-test:tarball:keep-flag() {
+test:tar:keep-flag() {
 	reset;
-	steward:tarball --keep mytool path/to/bin https://example.com/tool.tgz || return 1;
+	steward:tar --keep mytool path/to/bin https://example.com/tool.tgz || return 1;
 	generated "/opt/mytool" || return 1;
 	generated "cp -a" || return 1;
 	generated 'rm -fR' || return 1;
 }
 
-test:tarball:no-keep-by-default() {
+test:tar:no-keep-by-default() {
 	reset;
-	steward:tarball mytool path/to/bin https://example.com/tool.tgz || return 1;
+	steward:tar mytool path/to/bin https://example.com/tool.tgz || return 1;
 	generated "/opt/mytool" && return 1;
 	return 0;
 }
 
-test:tarball:missing-name() {
+test:tar:missing-name() {
 	reset;
-	steward:tarball 2>/dev/null && return 1;
+	steward:tar 2>/dev/null && return 1;
 	return 0;
 }
 
-test:tarball:missing-path() {
+test:tar:missing-path() {
 	reset;
-	steward:tarball mytool 2>/dev/null && return 1;
+	steward:tar mytool 2>/dev/null && return 1;
 	return 0;
 }
 
-test:tarball:missing-url() {
+test:tar:missing-url() {
 	reset;
-	steward:tarball mytool path/to/bin 2>/dev/null && return 1;
+	steward:tar mytool path/to/bin 2>/dev/null && return 1;
 	return 0;
 }
 
-# steward:zipball Tests
+# steward:zip Tests
 #------------------------------------------------------------------------------
 
-test:zipball:valid() {
+test:zip:valid() {
 	reset;
-	steward:zipball mytool path/to/bin https://example.com/tool.zip || return 1;
+	steward:zip mytool path/to/bin https://example.com/tool.zip || return 1;
 	generated "curl" || return 1;
 	generated "example.com" || return 1;
 	generated "unzip -qo" || return 1;
@@ -216,39 +216,39 @@ test:zipball:valid() {
 	generated "/usr/local/bin/mytool" || return 1;
 	generated "mktemp -d" || return 1;
 	generated 'rm -fR' || return 1;
-	[[ -f /tmp/steward/170--zipball-install.sh ]] || return 1;
+	[[ -f /tmp/steward/1-08-internal-zip-install.sh ]] || return 1;
 }
 
-test:zipball:keep-flag() {
+test:zip:keep-flag() {
 	reset;
-	steward:zipball --keep mytool path/to/bin https://example.com/tool.zip || return 1;
+	steward:zip --keep mytool path/to/bin https://example.com/tool.zip || return 1;
 	generated "/opt/mytool" || return 1;
 	generated "cp -a" || return 1;
 	generated 'rm -fR' || return 1;
 }
 
-test:zipball:no-keep-by-default() {
+test:zip:no-keep-by-default() {
 	reset;
-	steward:zipball mytool path/to/bin https://example.com/tool.zip || return 1;
+	steward:zip mytool path/to/bin https://example.com/tool.zip || return 1;
 	generated "/opt/mytool" && return 1;
 	return 0;
 }
 
-test:zipball:missing-name() {
+test:zip:missing-name() {
 	reset;
-	steward:zipball 2>/dev/null && return 1;
+	steward:zip 2>/dev/null && return 1;
 	return 0;
 }
 
-test:zipball:missing-path() {
+test:zip:missing-path() {
 	reset;
-	steward:zipball mytool 2>/dev/null && return 1;
+	steward:zip mytool 2>/dev/null && return 1;
 	return 0;
 }
 
-test:zipball:missing-url() {
+test:zip:missing-url() {
 	reset;
-	steward:zipball mytool path/to/bin 2>/dev/null && return 1;
+	steward:zip mytool path/to/bin 2>/dev/null && return 1;
 	return 0;
 }
 
@@ -306,8 +306,8 @@ test:npm:prereq-skipped-when-present() {
 	# npm is available in this environment — no key/src/packages should be generated
 	reset;
 	steward:npm is-odd || return 1;
-	[[ ! -f /tmp/steward/100--key-setup.sh ]] || return 1;
-	[[ ! -f /tmp/steward/110--src-setup.sh ]] || return 1;
+	[[ ! -f /tmp/steward/1-01-internal-key-setup.sh ]] || return 1;
+	[[ ! -f /tmp/steward/1-02-internal-src-setup.sh ]] || return 1;
 	[[ ! -f /tmp/steward/apt-packages ]] || return 1;
 	# but the manifest should still be generated
 	[[ -f /tmp/steward/npm-packages ]] || return 1;
@@ -386,32 +386,32 @@ test:helm:valid() {
 	reset;
 	steward:helm my-nginx bitnami/nginx || return 1;
 	generated "helm upgrade --install" || return 1;
-	generated "'my-nginx'" || return 1;
-	generated "'bitnami/nginx'" || return 1;
+	generated "my-nginx" || return 1;
+	generated "bitnami/nginx" || return 1;
 	generated "--atomic" || return 1;
 	generated "--wait" || return 1;
-	generated "--timeout '60s'" || return 1;
+	generated "--timeout 60s" || return 1;
 }
 
 test:helm:with-namespace() {
 	reset;
 	steward:helm production/my-nginx bitnami/nginx || return 1;
-	generated "'my-nginx'" || return 1;
-	generated "--namespace 'production'" || return 1;
+	generated "my-nginx" || return 1;
+	generated "--namespace production" || return 1;
 	generated "--create-namespace" || return 1;
 }
 
 test:helm:with-version() {
 	reset;
 	steward:helm my-nginx bitnami/nginx@1.2.3 || return 1;
-	generated "'bitnami/nginx'" || return 1;
-	generated "--version '1.2.3'" || return 1;
+	generated "bitnami/nginx" || return 1;
+	generated "--version 1.2.3" || return 1;
 }
 
 test:helm:with-timeout() {
 	reset;
 	steward:helm my-nginx bitnami/nginx --timeout 120 || return 1;
-	generated "--timeout '120s'" || return 1;
+	generated "--timeout 120s" || return 1;
 }
 
 test:helm:with-values-stdin() {
@@ -439,7 +439,7 @@ test:helm:guard-once() {
 	reset;
 	steward:helm my-nginx bitnami/nginx || return 1;
 	steward:helm my-redis bitnami/redis || return 1;
-	[[ $(grep -c "helm upgrade --install" /tmp/steward/210--helm-install.sh) -eq 2 ]] || return 1;
+	[[ $(grep -c "helm upgrade --install" /tmp/steward/helm-cmds) -eq 2 ]] || return 1;
 }
 
 test:helm:parallel-installs() {
@@ -447,12 +447,12 @@ test:helm:parallel-installs() {
 	steward:helm my-nginx bitnami/nginx || return 1;
 	steward:helm my-redis bitnami/redis || return 1;
 	# Each install should be backgrounded (trailing &)
-	[[ $(grep -c '&$' /tmp/steward/210--helm-install.sh) -eq 2 ]] || return 1;
+	[[ $(grep -c '&$' /tmp/steward/helm-cmds) -eq 2 ]] || return 1;
 }
 
 test:helm:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/210--helm-install.sh ]] || return 1;
+	[[ ! -f /tmp/steward/1-12-internal-helm-install.sh ]] || return 1;
 }
 
 test:helm:missing-release() {
@@ -567,19 +567,19 @@ test:eager:valid() {
 	reset;
 	steward:eager setup <<<"echo hello";
 	generated "echo hello" || return 1;
-	[[ -f /tmp/steward/000-eager-setup.sh ]] || return 1;
+	[[ -f /tmp/steward/0-00-eager-setup.sh ]] || return 1;
 }
 
 test:eager:custom-order() {
 	reset;
 	steward:eager :50 early <<<"echo first";
-	[[ -f /tmp/steward/050-eager-early.sh ]] || return 1;
+	[[ -f /tmp/steward/0-50-eager-early.sh ]] || return 1;
 }
 
 test:eager:base-range() {
 	reset;
 	steward:eager :99 max <<<"echo ceiling";
-	[[ -f /tmp/steward/099-eager-max.sh ]] || return 1;
+	[[ -f /tmp/steward/0-99-eager-max.sh ]] || return 1;
 }
 
 test:eager:no-name() {
@@ -591,43 +591,30 @@ test:eager:no-name() {
 # steward:hook Tests
 #------------------------------------------------------------------------------
 
-test:hook:valid() {
-	reset;
-	steward:hook setup <<<"echo hello";
-	generated "echo hello" || return 1;
-	[[ -f /tmp/steward/100-hook-setup.sh ]] || return 1;
-}
-
-test:hook:custom-order() {
-	reset;
-	steward:hook :50 mid <<<"echo middle";
-	[[ -f /tmp/steward/150-hook-mid.sh ]] || return 1;
-}
-
 test:hook:before-anchor() {
 	reset;
 	steward:hook --before npm-install setup-node <<<"echo pre-npm";
 	generated "echo pre-npm" || return 1;
-	[[ -f /tmp/steward/179-hook-setup-node.sh ]] || return 1;
+	[[ -f /tmp/steward/1-08-hook-setup-node.sh ]] || return 1;
 }
 
 test:hook:after-anchor() {
 	reset;
 	steward:hook --after composer-install clear-cache <<<"echo post-composer";
 	generated "echo post-composer" || return 1;
-	[[ -f /tmp/steward/191-hook-clear-cache.sh ]] || return 1;
+	[[ -f /tmp/steward/1-11-hook-clear-cache.sh ]] || return 1;
 }
 
 test:hook:before-apt-install() {
 	reset;
 	steward:hook --before apt-install pre-apt <<<"echo pre";
-	[[ -f /tmp/steward/129-hook-pre-apt.sh ]] || return 1;
+	[[ -f /tmp/steward/1-03-hook-pre-apt.sh ]] || return 1;
 }
 
 test:hook:after-go-install() {
 	reset;
 	steward:hook --after go-install post-go <<<"echo post";
-	[[ -f /tmp/steward/231-hook-post-go.sh ]] || return 1;
+	[[ -f /tmp/steward/1-15-hook-post-go.sh ]] || return 1;
 }
 
 test:hook:unknown-anchor() {
@@ -638,7 +625,7 @@ test:hook:unknown-anchor() {
 
 test:hook:no-name() {
 	reset;
-	steward:hook <<<"echo anonymous";
+	steward:hook --before apt-install <<<"echo anonymous";
 	generated "echo anonymous" || return 1;
 }
 
@@ -649,13 +636,13 @@ test:defer:valid() {
 	reset;
 	steward:defer setup <<<"echo hello";
 	generated "echo hello" || return 1;
-	[[ -f /tmp/steward/300-deferred-setup.sh ]] || return 1;
+	[[ -f /tmp/steward/2-00-deferred-setup.sh ]] || return 1;
 }
 
 test:defer:custom-order() {
 	reset;
 	steward:defer :50 early <<<"echo first";
-	[[ -f /tmp/steward/350-deferred-early.sh ]] || return 1;
+	[[ -f /tmp/steward/2-50-deferred-early.sh ]] || return 1;
 }
 
 test:defer:no-name() {
@@ -982,29 +969,29 @@ missing-url  | bin jq                      | error                        | $(t 
 
 ---
 
-## steward:tarball
+## steward:tar
 
 Scenario       | Invocation                                | Expected                       | ✓/✗
 ---------------|-------------------------------------------|--------------------------------|----
-valid          | tarball mytool path/bin https://url.tgz   | tar + bin + cleanup in output  | $(t tarball:valid)
-keep-flag      | tarball --keep mytool path/bin https://..  | /opt/mytool created            | $(t tarball:keep-flag)
-no-keep        | tarball mytool path/bin https://url.tgz   | no /opt/mytool                 | $(t tarball:no-keep-by-default)
-missing-name   | tarball                                   | error                          | $(t tarball:missing-name)
-missing-path   | tarball mytool                            | error                          | $(t tarball:missing-path)
-missing-url    | tarball mytool path/bin                   | error                          | $(t tarball:missing-url)
+valid          | tar mytool path/bin https://url.tgz   | tar + bin + cleanup in output  | $(t tar:valid)
+keep-flag      | tar --keep mytool path/bin https://..  | /opt/mytool created            | $(t tar:keep-flag)
+no-keep        | tar mytool path/bin https://url.tgz   | no /opt/mytool                 | $(t tar:no-keep-by-default)
+missing-name   | tar                                   | error                          | $(t tar:missing-name)
+missing-path   | tar mytool                            | error                          | $(t tar:missing-path)
+missing-url    | tar mytool path/bin                   | error                          | $(t tar:missing-url)
 
 ---
 
-## steward:zipball
+## steward:zip
 
 Scenario       | Invocation                                | Expected                       | ✓/✗
 ---------------|-------------------------------------------|--------------------------------|----
-valid          | zipball mytool path/bin https://url.zip   | unzip + bin + cleanup in output| $(t zipball:valid)
-keep-flag      | zipball --keep mytool path/bin https://..  | /opt/mytool created            | $(t zipball:keep-flag)
-no-keep        | zipball mytool path/bin https://url.zip   | no /opt/mytool                 | $(t zipball:no-keep-by-default)
-missing-name   | zipball                                   | error                          | $(t zipball:missing-name)
-missing-path   | zipball mytool                            | error                          | $(t zipball:missing-path)
-missing-url    | zipball mytool path/bin                   | error                          | $(t zipball:missing-url)
+valid          | zip mytool path/bin https://url.zip   | unzip + bin + cleanup in output| $(t zip:valid)
+keep-flag      | zip --keep mytool path/bin https://..  | /opt/mytool created            | $(t zip:keep-flag)
+no-keep        | zip mytool path/bin https://url.zip   | no /opt/mytool                 | $(t zip:no-keep-by-default)
+missing-name   | zip                                   | error                          | $(t zip:missing-name)
+missing-path   | zip mytool                            | error                          | $(t zip:missing-path)
+missing-url    | zip mytool path/bin                   | error                          | $(t zip:missing-url)
 
 ---
 
@@ -1058,8 +1045,8 @@ timeout         | helm my-nginx chart --timeout 120       | --timeout 120s      
 values-stdin    | helm my-nginx chart <<< "key: val"      | --values - with yaml         | $(t helm:with-values-stdin)
 with-repo       | helm my-nginx bitnami/nginx https://... | repo in helm-repos manifest  | $(t helm:with-repo)
 repo-dedup      | helm a chart repo; helm b chart repo    | single repo entry            | $(t helm:repo-dedup)
-guard-once      | helm a x; helm b y                      | single prerequisite check    | $(t helm:guard-once)
-parallel        | helm a x; helm b y                      | installs backgrounded (&)    | $(t helm:parallel-installs)
+guard-once      | helm a x; helm b y                      | both commands in helm-cmds   | $(t helm:guard-once)
+parallel        | helm a x; helm b y                      | backgrounded (&) in helm-cmds| $(t helm:parallel-installs)
 unused          | (no helm calls)                         | no script generated          | $(t helm:not-generated-if-unused)
 missing-release | helm                                    | error                        | $(t helm:missing-release)
 missing-chart   | helm my-release                         | error                        | $(t helm:missing-chart)
@@ -1098,9 +1085,9 @@ missing-name  | go                          | error                     | $(t go
 
 Scenario      | Invocation                          | Expected                  | ✓/✗
 --------------|-------------------------------------|---------------------------|----
-valid         | eager setup <<<"echo hello"         | content in 000-eager-*    | $(t eager:valid)
-custom-order  | eager :50 early <<<"x"              | 050-eager-* created       | $(t eager:custom-order)
-base-range    | eager :99 max <<<"x"                  | 099-eager-* created       | $(t eager:base-range)
+valid         | eager setup <<<"echo hello"         | content in 0-00-eager-*   | $(t eager:valid)
+custom-order  | eager :50 early <<<"x"              | 0-50-eager-* created      | $(t eager:custom-order)
+base-range    | eager :99 max <<<"x"                  | 0-99-eager-* created      | $(t eager:base-range)
 no-name       | eager <<<"x"                        | content captured          | $(t eager:no-name)
 
 ---
@@ -1109,14 +1096,12 @@ no-name       | eager <<<"x"                        | content captured          
 
 Scenario        | Invocation                                | Expected                  | ✓/✗
 ----------------|-------------------------------------------|---------------------------|----
-valid           | hook setup <<<"echo hello"                | content in 100-hook-*     | $(t hook:valid)
-custom-order    | hook :50 mid <<<"x"                       | 150-hook-* created        | $(t hook:custom-order)
-before-anchor   | hook --before npm-install name <<<"x"     | 179-hook-* created        | $(t hook:before-anchor)
-after-anchor    | hook --after composer-install name <<<"x"  | 191-hook-* created        | $(t hook:after-anchor)
-before-apt      | hook --before apt-install name <<<"x"     | 129-hook-* created        | $(t hook:before-apt-install)
-after-go        | hook --after go-install name <<<"x"       | 231-hook-* created        | $(t hook:after-go-install)
+before-anchor   | hook --before npm-install name <<<"x"     | 1-08-hook-* created       | $(t hook:before-anchor)
+after-anchor    | hook --after composer-install name <<<"x"  | 1-11-hook-* created       | $(t hook:after-anchor)
+before-apt      | hook --before apt-install name <<<"x"     | 1-03-hook-* created       | $(t hook:before-apt-install)
+after-go        | hook --after go-install name <<<"x"       | 1-15-hook-* created       | $(t hook:after-go-install)
 unknown-anchor  | hook --before nonexistent <<<"x"          | error                     | $(t hook:unknown-anchor)
-no-name         | hook <<<"x"                               | content captured          | $(t hook:no-name)
+no-name         | hook --before apt-install <<<"x"          | content captured          | $(t hook:no-name)
 
 ---
 
@@ -1124,8 +1109,8 @@ no-name         | hook <<<"x"                               | content captured  
 
 Scenario     | Invocation                   | Expected                   | ✓/✗
 -------------|------------------------------|----------------------------|----
-valid        | defer setup <<<"echo hello"  | content in 300-deferred-*  | $(t defer:valid)
-custom-order | defer :50 early <<<"x"       | 350-deferred-* created     | $(t defer:custom-order)
+valid        | defer setup <<<"echo hello"  | content in 2-00-deferred-* | $(t defer:valid)
+custom-order | defer :50 early <<<"x"       | 2-50-deferred-* created    | $(t defer:custom-order)
 no-name      | defer <<<"x"                 | content captured           | $(t defer:no-name)
 
 ---

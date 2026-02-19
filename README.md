@@ -115,7 +115,7 @@ src <url:*.deb>
 Schedule an APT package for installation	
 
 ```bash
-apt [--try] [--temp] <name[=version]>	
+apt [--try|--temp] <name[=version]>	
 ```
 
 | Flag | Description |
@@ -136,7 +136,7 @@ apt [--try] [--temp] <name[=version]>
 Schedule a .deb package for installation	
 
 ```bash
-deb [--try] [--temp] <url>	
+deb [--try|--temp] <url>	
 ```
 
 | Flag | Description |
@@ -167,6 +167,50 @@ bin <name> <url>
 | `<name>`  | Binary filename in /usr/local/bin |
 | `<url>`   | URL to download the binary from   |
 
+### `tar`
+
+Download a tar, extract it, and install a binary from it to /usr/local/bin	
+
+```bash
+tar [--keep] <name> <path/to/bin> <url>	
+```
+
+| Flag | Description |
+|------|-------------|
+| Parameter  | Description                               |
+|------------|-------------------------------------------|
+| `[--keep]` | Keep the extracted archive in /opt/<name> |
+
+| Argument | Description |
+|----------|-------------|
+| Parameter | Description                                                   |
+|-----------|---------------------------------------------------------------|
+| `<name>`  | Binary filename in /usr/local/bin (and /opt/<name> if --keep) |
+| `<path>`  | Path to the binary inside the archive                         |
+| `<url>`   | URL to download the tar from                                  |
+
+### `zip`
+
+Download a zip archive, extract it, and install a binary from it to /usr/local/bin	
+
+```bash
+zip [--keep] <name> <path/to/bin> <url>	
+```
+
+| Flag | Description |
+|------|-------------|
+| Parameter  | Description                               |
+|------------|-------------------------------------------|
+| `[--keep]` | Keep the extracted archive in /opt/<name> |
+
+| Argument | Description |
+|----------|-------------|
+| Parameter | Description                                                   |
+|-----------|---------------------------------------------------------------|
+| `<name>`  | Binary filename in /usr/local/bin (and /opt/<name> if --keep) |
+| `<path>`  | Path to the binary inside the archive                         |
+| `<url>`   | URL to download the zip archive from                          |
+
 ### `ext`
 
 Execute an external installer script from a URL	
@@ -183,32 +227,121 @@ ext <url> [shell] [...args]
 | `[shell]`   | Interpreter to use. Default: bash.        |
 | `[...args]` | Additional arguments passed to the script |
 
-### `eager`
+### `npm`
 
-Run shell commands before the built-in pipeline (eager scripts: 0-99)	
+Install npm packages (global by default, local with --dir)	
 
 ```bash
-eager [:ord] [name] <<<"command"           	
-eager --internal [:ord] [name] <<<"command"	
-eager [:ord] [name] <<SH ... SH            	
+npm <name[@version]>             	
+npm --dir <path> [name[@version]]	
 ```
-
-| Flag | Description |
-|------|-------------|
-| Parameter                                                                         | Description |
-|-----------------------------------------------------------------------------------|-------------|
-| `[--internal]	Shift base from 000 to 100 (injection into the built-in pipeline).` |             |
 
 | Argument | Description |
 |----------|-------------|
-| Parameter                                                | Description |
-|----------------------------------------------------------|-------------|
-| `[:ord]		Order of script execution (00-99). Default 00.` |             |
-| `[name]		Label.`                                         |             |
+| Parameter          | Description                                                                   |
+|--------------------|-------------------------------------------------------------------------------|
+| `[name[@version]]` | Package name, optionally with @version suffix. Without --dir: global install. |
+
+### `composer`
+
+Install composer packages (global by default, local with --dir)	
+
+```bash
+composer <name[@version]>             	
+composer --dir <path> [name[@version]]	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter          | Description                                                                       |
+|--------------------|-----------------------------------------------------------------------------------|
+| `[name[@version]]` | Package name, optionally with @version constraint. Without --dir: global require. |
+
+### `helm`
+
+Install a Helm chart via `helm upgrade --install` with safe defaults.                                 	
+Runs with --atomic (auto-rollback on failure), --wait (blocks until resources are ready),             	
+--timeout (default 60s, configurable), and --create-namespace (when namespace is specified).          	
+Multiple charts install in parallel — total wait time is the longest single chart, not the sum.     	
+Repository URLs are deduplicated: multiple charts from the same repo trigger only one `helm repo add`.	
+Values can be passed via stdin YAML (heredoc or herestring) instead of --set flags.                   	
+
+```bash
+helm [namespace/]<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter               | Description                                                                       |
+|-------------------------|-----------------------------------------------------------------------------------|
+| `[namespace/]<release>` | Release name, optionally prefixed with namespace/ (creates namespace if missing)  |
+| `<chart[@version]>`     | Chart reference (e.g. bitnami/nginx@1.2.3). Version pinned via --version.         |
+| `[repo]`                | Repository URL to add (chart prefix used as repo name, deduplicated across calls) |
+
+### `pip`
+
+Install pip packages (global by default, local venv with --dir)	
+
+```bash
+pip <name[@version]>             	
+pip --dir <path> [name[@version]]	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter          | Description                                                                       |
+|--------------------|-----------------------------------------------------------------------------------|
+| `[name[@version]]` | Package name, optionally with @version constraint. Without --dir: global install. |
+
+### `go`
+
+Install Go packages (global by default, local with --dir)	
+
+```bash
+go <name[@version]>             	
+go --dir <path> [name[@version]]	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter          | Description                                                                              |
+|--------------------|------------------------------------------------------------------------------------------|
+| `[name[@version]]` | Module path, optionally with @version (default: @latest). Without --dir: global install. |
+
+### `eager`
+
+Run shell commands before the built-in pipeline	
+
+```bash
+eager [:ord] [name] <<<"command"	
+eager [:ord] [name] <<SH ... SH 	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter                                               | Description |
+|---------------------------------------------------------|-------------|
+| `[:ord]	Order of script execution (00-99). Default 00.` |             |
+| `[name]	Label.`                                         |             |
+
+### `hook`
+
+Inject shell commands between built-in pipeline stages.	
+
+```bash
+hook --before <stage> [name] <<<"command"	
+hook --after <stage> [name] <<<"command" 	
+```
+
+| Argument | Description |
+|----------|-------------|
+| Parameter         | Description |
+|-------------------|-------------|
+| `[name]			Label.` |             |
 
 ### `defer`
 
-Defer shell commands to run after all packages are installed (deferred scripts: 0-99)	
+Defer shell commands to run after all packages are installed	
 
 ```bash
 defer [:ord] [name] <<<"command"	

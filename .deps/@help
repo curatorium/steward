@@ -32,10 +32,27 @@ for name in $(docs:list keyword); do
 done | sed 's/^/\t/'
 
 cat <<-TXT
-	SCHEDULE
-	${T}$(# shellcheck disable=SC2034
-	echo "The order in which the scheduled actions ar executed.")
 
-	$(grep -oP "(?<=/tmp/steward/)([-\w]+)(?=.sh)" "$DOCFILE" | sort -u | sed $'s/^/\t:/; s/--/\t/')
+	SCHEDULE
+	${T}eager 0-99
+	${T}  internal
+	${T}    prereqs
+	${T}    key-setup
+	${T}    src-setup
+	${T}    deb-download
+	${T}    apt-install
+	${T}    ext-installer
+	${T}    bin-install
+	${T}    tar-install
+	${T}    zip-install
+	${T}    npm-install
+	${T}    composer-install
+	${T}    helm-repo
+	${T}    helm-install
+	${T}    pip-install
+	${T}    go-install
+	${T}    apt-cleanup
+	${T}  defer 0-99
 
 TXT
+
