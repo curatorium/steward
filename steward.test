@@ -19,8 +19,8 @@ generated() {
 test:key:valid() {
 	reset;
 	steward:key docker https://download.docker.com/linux/ubuntu/gpg || return 1;
-	generated "download.docker.com" || return 1;
-	generated "docker.gpg" || return 1;
+	[[ -f /tmp/steward/key-manifest ]] || return 1;
+	grep -qP "^docker\thttps://download.docker.com" /tmp/steward/key-manifest || return 1;
 }
 
 test:key:missing-name() {
@@ -43,16 +43,18 @@ test:key:missing-url() {
 test:src:valid-full() {
 	reset;
 	steward:src docker https://download.docker.com/linux/ubuntu jammy stable || return 1;
-	generated "download.docker.com" || return 1;
-	generated "jammy" || return 1;
-	generated "stable" || return 1;
+	[[ -f /tmp/steward/src-manifest ]] || return 1;
+	grep -q "download.docker.com" /tmp/steward/src-manifest || return 1;
+	grep -q "jammy" /tmp/steward/src-manifest || return 1;
+	grep -q "stable" /tmp/steward/src-manifest || return 1;
 }
 
 test:src:valid-deb-url() {
 	reset;
 	steward:src https://example.com/package.deb || return 1;
-	generated "example.com" || return 1;
-	generated "apt install" || return 1;
+	[[ -f /tmp/steward/src-manifest ]] || return 1;
+	grep -q "deb-url" /tmp/steward/src-manifest || return 1;
+	grep -q "example.com" /tmp/steward/src-manifest || return 1;
 }
 
 test:src:no-key-flag() {
@@ -101,21 +103,24 @@ test:apt:missing-name() {
 test:deb:valid() {
 	reset;
 	steward:deb https://example.com/package.deb || return 1;
-	generated "example.com" || return 1;
+	[[ -f /tmp/steward/deb-manifest ]] || return 1;
+	grep -q "example.com" /tmp/steward/deb-manifest || return 1;
 	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages || return 1;
 }
 
 test:deb:try-flag() {
 	reset;
 	steward:deb --try https://example.com/package.deb || return 1;
-	generated "example.com" || return 1;
+	grep -q "example.com" /tmp/steward/deb-manifest || return 1;
+	grep -qP "\t-try$" /tmp/steward/deb-manifest || return 1;
 	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages-try || return 1;
 }
 
 test:deb:temp-flag() {
 	reset;
 	steward:deb --temp https://example.com/package.deb || return 1;
-	generated "example.com" || return 1;
+	grep -q "example.com" /tmp/steward/deb-manifest || return 1;
+	grep -qP "\t-tmp$" /tmp/steward/deb-manifest || return 1;
 	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-packages-tmp || return 1;
 }
 
@@ -137,9 +142,8 @@ test:deb:invalid-url() {
 test:bin:valid() {
 	reset;
 	steward:bin jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64 || return 1;
-	generated "jq" || return 1;
-	generated "github.com" || return 1;
-	generated "/usr/local/bin" || return 1;
+	[[ -f /tmp/steward/bin-manifest ]] || return 1;
+	grep -qP "^jq\thttps://github.com" /tmp/steward/bin-manifest || return 1;
 }
 
 test:bin:missing-name() {
@@ -160,28 +164,20 @@ test:bin:missing-url() {
 test:tar:valid() {
 	reset;
 	steward:tar mytool path/to/bin https://example.com/tool.tgz || return 1;
-	generated "curl" || return 1;
-	generated "example.com" || return 1;
-	generated "tar xzf" || return 1;
-	generated "path/to/bin" || return 1;
-	generated "/usr/local/bin/mytool" || return 1;
-	generated "mktemp -d" || return 1;
-	generated 'rm -fR' || return 1;
-	[[ -f /tmp/steward/1-07-internal-tar-install.sh ]] || return 1;
+	[[ -f /tmp/steward/tar-manifest ]] || return 1;
+	grep -qP "^mytool\tpath/to/bin\thttps://example.com" /tmp/steward/tar-manifest || return 1;
 }
 
 test:tar:keep-flag() {
 	reset;
 	steward:tar --keep mytool path/to/bin https://example.com/tool.tgz || return 1;
-	generated "/opt/mytool" || return 1;
-	generated "cp -a" || return 1;
-	generated 'rm -fR' || return 1;
+	grep -qP "\ttrue$" /tmp/steward/tar-manifest || return 1;
 }
 
 test:tar:no-keep-by-default() {
 	reset;
 	steward:tar mytool path/to/bin https://example.com/tool.tgz || return 1;
-	generated "/opt/mytool" && return 1;
+	grep -qP "\ttrue$" /tmp/steward/tar-manifest && return 1;
 	return 0;
 }
 
@@ -209,28 +205,20 @@ test:tar:missing-url() {
 test:zip:valid() {
 	reset;
 	steward:zip mytool path/to/bin https://example.com/tool.zip || return 1;
-	generated "curl" || return 1;
-	generated "example.com" || return 1;
-	generated "unzip -qo" || return 1;
-	generated "path/to/bin" || return 1;
-	generated "/usr/local/bin/mytool" || return 1;
-	generated "mktemp -d" || return 1;
-	generated 'rm -fR' || return 1;
-	[[ -f /tmp/steward/1-08-internal-zip-install.sh ]] || return 1;
+	[[ -f /tmp/steward/zip-manifest ]] || return 1;
+	grep -qP "^mytool\tpath/to/bin\thttps://example.com" /tmp/steward/zip-manifest || return 1;
 }
 
 test:zip:keep-flag() {
 	reset;
 	steward:zip --keep mytool path/to/bin https://example.com/tool.zip || return 1;
-	generated "/opt/mytool" || return 1;
-	generated "cp -a" || return 1;
-	generated 'rm -fR' || return 1;
+	grep -qP "\ttrue$" /tmp/steward/zip-manifest || return 1;
 }
 
 test:zip:no-keep-by-default() {
 	reset;
 	steward:zip mytool path/to/bin https://example.com/tool.zip || return 1;
-	generated "/opt/mytool" && return 1;
+	grep -qP "\ttrue$" /tmp/steward/zip-manifest && return 1;
 	return 0;
 }
 
@@ -265,7 +253,7 @@ test:ext:with-shell() {
 	reset;
 	steward:ext https://get.docker.com sh || return 1;
 	generated "get.docker.com" || return 1;
-	generated "'sh'" || return 1;
+	grep -qP "\tsh\t" /tmp/steward/ext-manifest || grep -qP "\tsh$" /tmp/steward/ext-manifest || return 1;
 }
 
 test:ext:missing-url() {
@@ -306,8 +294,8 @@ test:npm:prereq-skipped-when-present() {
 	# npm is available in this environment — no key/src/packages should be generated
 	reset;
 	steward:npm is-odd || return 1;
-	[[ ! -f /tmp/steward/1-01-internal-key-setup.sh ]] || return 1;
-	[[ ! -f /tmp/steward/1-02-internal-src-setup.sh ]] || return 1;
+	[[ ! -f /tmp/steward/key-manifest ]] || return 1;
+	[[ ! -f /tmp/steward/src-manifest ]] || return 1;
 	[[ ! -f /tmp/steward/apt-packages ]] || return 1;
 	# but the manifest should still be generated
 	[[ -f /tmp/steward/npm-packages ]] || return 1;
@@ -337,8 +325,9 @@ test:npm:missing-name() {
 test:composer:valid() {
 	reset;
 	steward:composer laravel/installer || return 1;
-	generated "php.*-cli" || return 1;
-	generated "getcomposer.org" || return 1;
+	# php is not available — prereqs should be generated (apt-packages + ext-manifest)
+	grep -q "php.*-cli" /tmp/steward/apt-packages || return 1;
+	grep -q "getcomposer.org" /tmp/steward/ext-manifest || return 1;
 	grep -qP "^!global\tlaravel/installer$" /tmp/steward/composer-packages || return 1;
 }
 
@@ -385,47 +374,43 @@ test:composer:missing-name() {
 test:helm:valid() {
 	reset;
 	steward:helm my-nginx bitnami/nginx || return 1;
-	generated "helm upgrade --install" || return 1;
-	generated "my-nginx" || return 1;
-	generated "bitnami/nginx" || return 1;
-	generated "--atomic" || return 1;
-	generated "--wait" || return 1;
-	generated "--timeout 60s" || return 1;
+	[[ -f /tmp/steward/helm-manifest ]] || return 1;
+	grep -qP "^my-nginx\tbitnami/nginx\t\t\t60\t$" /tmp/steward/helm-manifest || return 1;
 }
 
 test:helm:with-namespace() {
 	reset;
 	steward:helm production/my-nginx bitnami/nginx || return 1;
-	generated "my-nginx" || return 1;
-	generated "--namespace production" || return 1;
-	generated "--create-namespace" || return 1;
+	grep -q "my-nginx" /tmp/steward/helm-manifest || return 1;
+	grep -qP "\tproduction\t" /tmp/steward/helm-manifest || return 1;
 }
 
 test:helm:with-version() {
 	reset;
 	steward:helm my-nginx bitnami/nginx@1.2.3 || return 1;
-	generated "bitnami/nginx" || return 1;
-	generated "--version 1.2.3" || return 1;
+	grep -q "bitnami/nginx" /tmp/steward/helm-manifest || return 1;
+	grep -qP "\t1\.2\.3\t" /tmp/steward/helm-manifest || return 1;
 }
 
 test:helm:with-timeout() {
 	reset;
 	steward:helm my-nginx bitnami/nginx --timeout 120 || return 1;
-	generated "--timeout 120s" || return 1;
+	grep -qP "\t120\t" /tmp/steward/helm-manifest || return 1;
 }
 
 test:helm:with-values-stdin() {
 	reset;
 	steward:helm my-nginx bitnami/nginx <<< "replicaCount: 3" || return 1;
-	generated "--values -" || return 1;
-	generated "replicaCount: 3" || return 1;
+	[[ -f /tmp/steward/helm-values-my-nginx ]] || return 1;
+	grep -q "replicaCount: 3" /tmp/steward/helm-values-my-nginx || return 1;
+	grep -q "helm-values-my-nginx" /tmp/steward/helm-manifest || return 1;
 }
 
 test:helm:with-repo() {
 	reset;
 	steward:helm my-nginx bitnami/nginx https://charts.bitnami.com/bitnami || return 1;
 	grep -qP "^bitnami\thttps://charts.bitnami.com/bitnami$" /tmp/steward/helm-repos || return 1;
-	generated "helm upgrade --install" || return 1;
+	[[ -f /tmp/steward/helm-manifest ]] || return 1;
 }
 
 test:helm:repo-dedup() {
@@ -439,20 +424,12 @@ test:helm:guard-once() {
 	reset;
 	steward:helm my-nginx bitnami/nginx || return 1;
 	steward:helm my-redis bitnami/redis || return 1;
-	[[ $(grep -c "helm upgrade --install" /tmp/steward/helm-cmds) -eq 2 ]] || return 1;
-}
-
-test:helm:parallel-installs() {
-	reset;
-	steward:helm my-nginx bitnami/nginx || return 1;
-	steward:helm my-redis bitnami/redis || return 1;
-	# Each install should be backgrounded (trailing &)
-	[[ $(grep -c '&$' /tmp/steward/helm-cmds) -eq 2 ]] || return 1;
+	[[ $(wc -l < /tmp/steward/helm-manifest) -eq 2 ]] || return 1;
 }
 
 test:helm:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/1-12-internal-helm-install.sh ]] || return 1;
+	[[ ! -f /tmp/steward/helm-manifest ]] || return 1;
 }
 
 test:helm:missing-release() {
@@ -593,28 +570,28 @@ test:eager:no-name() {
 
 test:hook:before-anchor() {
 	reset;
-	steward:hook --before npm-install setup-node <<<"echo pre-npm";
+	steward:hook --before npm setup-node <<<"echo pre-npm";
 	generated "echo pre-npm" || return 1;
-	[[ -f /tmp/steward/1-08-hook-setup-node.sh ]] || return 1;
+	[[ -f /tmp/steward/hook-before-npm-00-setup-node.sh ]] || return 1;
 }
 
 test:hook:after-anchor() {
 	reset;
-	steward:hook --after composer-install clear-cache <<<"echo post-composer";
+	steward:hook --after composer clear-cache <<<"echo post-composer";
 	generated "echo post-composer" || return 1;
-	[[ -f /tmp/steward/1-11-hook-clear-cache.sh ]] || return 1;
+	[[ -f /tmp/steward/hook-after-composer-00-clear-cache.sh ]] || return 1;
 }
 
-test:hook:before-apt-install() {
+test:hook:before-apt() {
 	reset;
-	steward:hook --before apt-install pre-apt <<<"echo pre";
-	[[ -f /tmp/steward/1-03-hook-pre-apt.sh ]] || return 1;
+	steward:hook --before apt pre-apt <<<"echo pre";
+	[[ -f /tmp/steward/hook-before-apt-00-pre-apt.sh ]] || return 1;
 }
 
-test:hook:after-go-install() {
+test:hook:after-go() {
 	reset;
-	steward:hook --after go-install post-go <<<"echo post";
-	[[ -f /tmp/steward/1-15-hook-post-go.sh ]] || return 1;
+	steward:hook --after go post-go <<<"echo post";
+	[[ -f /tmp/steward/hook-after-go-00-post-go.sh ]] || return 1;
 }
 
 test:hook:unknown-anchor() {
@@ -625,7 +602,7 @@ test:hook:unknown-anchor() {
 
 test:hook:no-name() {
 	reset;
-	steward:hook --before apt-install <<<"echo anonymous";
+	steward:hook --before apt <<<"echo anonymous";
 	generated "echo anonymous" || return 1;
 }
 
@@ -1045,9 +1022,8 @@ timeout         | helm my-nginx chart --timeout 120       | --timeout 120s      
 values-stdin    | helm my-nginx chart <<< "key: val"      | --values - with yaml         | $(t helm:with-values-stdin)
 with-repo       | helm my-nginx bitnami/nginx https://... | repo in helm-repos manifest  | $(t helm:with-repo)
 repo-dedup      | helm a chart repo; helm b chart repo    | single repo entry            | $(t helm:repo-dedup)
-guard-once      | helm a x; helm b y                      | both commands in helm-cmds   | $(t helm:guard-once)
-parallel        | helm a x; helm b y                      | backgrounded (&) in helm-cmds| $(t helm:parallel-installs)
-unused          | (no helm calls)                         | no script generated          | $(t helm:not-generated-if-unused)
+guard-once      | helm a x; helm b y                      | both entries in manifest     | $(t helm:guard-once)
+unused          | (no helm calls)                         | no manifest generated        | $(t helm:not-generated-if-unused)
 missing-release | helm                                    | error                        | $(t helm:missing-release)
 missing-chart   | helm my-release                         | error                        | $(t helm:missing-chart)
 
@@ -1096,12 +1072,12 @@ no-name       | eager <<<"x"                        | content captured          
 
 Scenario        | Invocation                                | Expected                  | ✓/✗
 ----------------|-------------------------------------------|---------------------------|----
-before-anchor   | hook --before npm-install name <<<"x"     | 1-08-hook-* created       | $(t hook:before-anchor)
-after-anchor    | hook --after composer-install name <<<"x"  | 1-11-hook-* created       | $(t hook:after-anchor)
-before-apt      | hook --before apt-install name <<<"x"     | 1-03-hook-* created       | $(t hook:before-apt-install)
-after-go        | hook --after go-install name <<<"x"       | 1-15-hook-* created       | $(t hook:after-go-install)
+before-anchor   | hook --before npm name <<<"x"             | hook-before-npm-* created | $(t hook:before-anchor)
+after-anchor    | hook --after composer name <<<"x"         | hook-after-composer-* created | $(t hook:after-anchor)
+before-apt      | hook --before apt name <<<"x"             | hook-before-apt-* created | $(t hook:before-apt)
+after-go        | hook --after go name <<<"x"               | hook-after-go-* created   | $(t hook:after-go)
 unknown-anchor  | hook --before nonexistent <<<"x"          | error                     | $(t hook:unknown-anchor)
-no-name         | hook --before apt-install <<<"x"          | content captured          | $(t hook:no-name)
+no-name         | hook --before apt <<<"x"                  | content captured          | $(t hook:no-name)
 
 ---
 

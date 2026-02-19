@@ -130,9 +130,8 @@ timeout         | helm my-nginx chart --timeout 120       | --timeout 120s      
 values-stdin    | helm my-nginx chart <<< "key: val"      | --values - with yaml         | ✅
 with-repo       | helm my-nginx bitnami/nginx https://... | repo in helm-repos manifest  | ✅
 repo-dedup      | helm a chart repo; helm b chart repo    | single repo entry            | ✅
-guard-once      | helm a x; helm b y                      | both commands in helm-cmds   | ✅
-parallel        | helm a x; helm b y                      | backgrounded (&) in helm-cmds| ✅
-unused          | (no helm calls)                         | no script generated          | ✅
+guard-once      | helm a x; helm b y                      | both entries in manifest     | ✅
+unused          | (no helm calls)                         | no manifest generated        | ✅
 missing-release | helm                                    | error                        | ✅
 missing-chart   | helm my-release                         | error                        | ✅
 
@@ -181,12 +180,12 @@ no-name       | eager <<<"x"                        | content captured          
 
 Scenario        | Invocation                                | Expected                  | ✓/✗
 ----------------|-------------------------------------------|---------------------------|----
-before-anchor   | hook --before npm-install name <<<"x"     | 1-08-hook-* created       | ✅
-after-anchor    | hook --after composer-install name <<<"x"  | 1-11-hook-* created       | ✅
-before-apt      | hook --before apt-install name <<<"x"     | 1-03-hook-* created       | ✅
-after-go        | hook --after go-install name <<<"x"       | 1-15-hook-* created       | ✅
+before-anchor   | hook --before npm name <<<"x"             | hook-before-npm-* created | ✅
+after-anchor    | hook --after composer name <<<"x"         | hook-after-composer-* created | ✅
+before-apt      | hook --before apt name <<<"x"             | hook-before-apt-* created | ✅
+after-go        | hook --after go name <<<"x"               | hook-after-go-* created   | ✅
 unknown-anchor  | hook --before nonexistent <<<"x"          | error                     | ✅
-no-name         | hook --before apt-install <<<"x"          | content captured          | ✅
+no-name         | hook --before apt <<<"x"                  | content captured          | ✅
 
 ---
 
@@ -284,5 +283,5 @@ dockerfile-fifo| RUN ./steward (writerless FIFO) | no hang, reads Stewardfile | 
 
 | ✅ Pass | ❌ Fail | ⚠️ Error |
 |---------|---------|----------|
-| 124 | 0 | 0 |
+| 123 | 0 | 0 |
 

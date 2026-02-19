@@ -329,15 +329,16 @@ eager [:ord] [name] <<SH ... SH
 Inject shell commands between built-in pipeline stages.	
 
 ```bash
-hook --before <stage> [name] <<<"command"	
-hook --after <stage> [name] <<<"command" 	
+hook --before <stage> [:ord] [name] <<<"command"	
+hook --after <stage> [:ord] [name] <<<"command" 	
 ```
 
 | Argument | Description |
 |----------|-------------|
-| Parameter         | Description |
-|-------------------|-------------|
-| `[name]			Label.` |             |
+| Parameter                                                         | Description |
+|-------------------------------------------------------------------|-------------|
+| `[:ord]	Order among hooks on the same stage (00-99). Default 00.` |             |
+| `[name]	Label.`                                                   |             |
 
 ### `defer`
 
