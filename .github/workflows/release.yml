@@ -23,7 +23,21 @@ jobs:
         run: bash-import pack steward -o .dist/steward
 
       - name: Run checks (shellcheck + tests)
-        run: .githooks/pre-commit
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -v /usr/local/bin/bash-import:/usr/local/bin/bash-import:ro \
+            -v /usr/local/bin/bash-test:/usr/local/bin/bash-test:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp:/tmp \
+            -e DOCKER_HOST_DIR="$PWD" \
+            -w /workspace \
+            neurony/php-8.2:ci \
+            bash -c '
+              apt-get update -qq && apt-get install -qqy shellcheck >/dev/null 2>&1;
+              git config --global --add safe.directory /workspace;
+              .githooks/pre-commit
+            '
 
       - name: Create release
         env:

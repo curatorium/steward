@@ -4,7 +4,7 @@
 shellcheck -s bash -x steward ||
 	{ echo "ERROR: shellcheck failed."; exit 1;	}
 
-bash-test steward.test > steward.test.md ||
+bash-test steward.test | tee steward.test.md; test "${PIPESTATUS[0]}" -eq 0 ||
 	{ echo "ERROR: tests failed."; exit 1; }
 
 .deps/@readme > README.md;
