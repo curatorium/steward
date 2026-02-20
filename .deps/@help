@@ -34,25 +34,27 @@ done | sed 's/^/\t/'
 cat <<-TXT
 
 	SCHEDULE
-	${T}eager 0-99
-	${T}  internal
-	${T}    prereqs
-	${T}    key-setup
-	${T}    src-setup
-	${T}    deb-download
-	${T}    apt-install
-	${T}    ext-installer
-	${T}    bin-install
-	${T}    tar-install
-	${T}    zip-install
-	${T}    npm-install
-	${T}    composer-install
-	${T}    helm-repo
-	${T}    helm-install
-	${T}    pip-install
-	${T}    go-install
-	${T}    apt-cleanup
-	${T}  defer 0-99
+	${T}- prereqs scheduled (zip, npm, composer, helm, pip, go)
+	${T}- prereqs (curl, gpg)
+
+	${T}- eager 0-99
+
+	${T}- key
+	${T}- src
+	${T}- deb
+	${T}- apt
+	${T}- ext
+	${T}- bin
+	${T}- tar
+	${T}- zip
+	${T}- npm
+	${T}- composer
+	${T}- helm
+	${T}- pip
+	${T}- go
+
+	${T}- defer 0-99
+
+	${T}- clean-up
 
 TXT
-

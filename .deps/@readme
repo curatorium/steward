@@ -53,22 +53,16 @@ cat <<-MD
 	)
 
 	$([[ -n "$(docs:tag -f md steward flag)" ]] && cat <<-xMD
-		| Flag | Description |
-		|------|-------------|
 		$(docs:tag -f md steward flag)
 	xMD
 	)
 
 	$([[ -n "$(docs:tag -f md steward option)" ]] && cat <<-xMD
-		| Option | Description |
-		|------|-------------|
 		$(docs:tag -f md steward option)
 	xMD
 	)
 
 	$([[ -n "$(docs:tag -f md steward arg)" ]] && cat <<-xMD
-		| Argument | Description |
-		|----------|-------------|
 		$(docs:tag -f md steward arg)
 	xMD
 	)
@@ -95,8 +89,6 @@ for name in $(docs:list keyword); do
 
 	if [[ -n "$(docs:tag -f md "$name" flag)" ]]; then
 		cat <<-MD
-			| Flag | Description |
-			|------|-------------|
 			$(docs:tag -f md "$name" flag)
 
 		MD
@@ -104,8 +96,6 @@ for name in $(docs:list keyword); do
 
 	if [[ -n "$(docs:tag -f md "$name" option)" ]]; then
 		cat <<-MD
-			| Option | Description |
-			|------|-------------|
 			$(docs:tag -f md "$name" option)
 
 		MD
@@ -113,8 +103,6 @@ for name in $(docs:list keyword); do
 
 	if [[ -n "$(docs:tag -f md "$name" arg)" ]]; then
 		cat <<-MD
-			| Argument | Description |
-			|----------|-------------|
 			$(docs:tag -f md "$name" arg)
 
 		MD

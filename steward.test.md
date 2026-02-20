@@ -17,6 +17,7 @@ Scenario      | Invocation                              | Expected              
 valid-full    | src docker https://repo jammy stable    | repo + dist + comp in output| ✅
 valid-deb-url | src https://example.com/pkg.deb         | URL + dpkg in output        | ✅
 no-key-flag   | src --no-key ppa https://repo jammy     | no signed-by in output      | ✅
+minimal-repo  | src myrepo https://repo.example.com     | repo + signed-by, no dist   | ✅
 missing-name  | src                                     | error                       | ✅
 
 ---
@@ -25,9 +26,12 @@ missing-name  | src                                     | error                 
 
 Scenario     | Invocation          | Expected                 | ✓/✗
 -------------|---------------------|--------------------------|----
-valid        | apt vim             | vim in packages file     | ✅
+valid        | apt vim             | vim in apt.pkgs          | ✅
 versioned    | apt vim=2:8.2       | version preserved        | ✅
-try-flag     | apt --try pkg       | pkg in packages-try file | ✅
+try-flag     | apt --try pkg       | pkg in apt-try.pkgs      | ✅
+temp-flag    | apt --temp pkg      | pkg in apt.pkgs + apt-rem.pkgs | ✅
+try+temp     | apt --try --temp pkg| pkg in apt-try.pkgs + apt-rem.pkgs | ✅
+temp+explicit| apt --temp + apt pkg| pkg excluded from apt-rem.pkgs | ✅
 missing-name | apt                 | error                    | ✅
 
 ---
@@ -36,11 +40,12 @@ missing-name | apt                 | error                    | ✅
 
 Scenario    | Invocation                       | Expected            | ✓/✗
 ------------|----------------------------------|---------------------|----
-valid       | deb https://example.com/pkg.deb      | URL in download + path in packages     | ✅
-try-flag    | deb --try https://example/pkg.deb    | URL in download + path in packages-try | ✅
-temp-flag   | deb --temp https://example/pkg.deb   | URL in download + path in packages-tmp | ✅
-missing-url | deb                                  | error                                  | ✅
-invalid-url | deb /local/path.deb                  | error                                  | ✅
+valid       | deb https://example.com/pkg.deb          | URL in deb.pkgs + path in apt.pkgs     | ✅
+try-flag    | deb --try https://example/pkg.deb        | URL in deb.pkgs + path in apt-try.pkgs | ✅
+temp-flag   | deb --temp https://example/pkg.deb       | URL in deb.pkgs + path in apt.pkgs+apt-rem.pkgs | ✅
+try+temp    | deb --try --temp https://example/pkg.deb | path in apt-try.pkgs + apt-rem.pkgs    | ✅
+missing-url | deb                                      | error                                  | ✅
+invalid-url | deb /local/path.deb                      | error                                  | ✅
 
 ---
 
@@ -86,6 +91,7 @@ Scenario    | Invocation                  | Expected        | ✓/✗
 ------------|-----------------------------|-----------------|----
 valid       | ext https://get.docker.com  | URL in output   | ✅
 with-shell  | ext https://example.com sh  | shell in output | ✅
+with-args   | ext url php -- --2 --dir=x  | args in output  | ✅
 missing-url | ext                         | error           | ✅
 
 ---
@@ -128,13 +134,13 @@ namespace       | helm prod/my-nginx bitnami/nginx        | --namespace prod    
 version         | helm my-nginx bitnami/nginx@1.2.3       | --version 1.2.3              | ✅
 timeout         | helm my-nginx chart --timeout 120       | --timeout 120s               | ✅
 values-stdin    | helm my-nginx chart <<< "key: val"      | --values - with yaml         | ✅
-with-repo       | helm my-nginx bitnami/nginx https://... | repo in helm-repos manifest  | ✅
+with-repo       | helm my-nginx bitnami/nginx https://... | repo in helm.lst             | ✅
 repo-dedup      | helm a chart repo; helm b chart repo    | single repo entry            | ✅
-guard-once      | helm a x; helm b y                      | both commands in helm-cmds   | ✅
-parallel        | helm a x; helm b y                      | backgrounded (&) in helm-cmds| ✅
-unused          | (no helm calls)                         | no script generated          | ✅
+guard-once      | helm a x; helm b y                      | both entries in manifest     | ✅
+unused          | (no helm calls)                         | no manifest generated        | ✅
 missing-release | helm                                    | error                        | ✅
-missing-chart   | helm my-release                         | error                        | ✅
+missing-ns      | helm my-release bitnami/nginx            | error (no namespace)         | ✅
+missing-chart   | helm default/my-release                  | error                        | ✅
 
 ---
 
@@ -170,10 +176,11 @@ missing-name  | go                          | error                     | ✅
 
 Scenario      | Invocation                          | Expected                  | ✓/✗
 --------------|-------------------------------------|---------------------------|----
-valid         | eager setup <<<"echo hello"         | content in 0-00-eager-*   | ✅
-custom-order  | eager :50 early <<<"x"              | 0-50-eager-* created      | ✅
-base-range    | eager :99 max <<<"x"                  | 0-99-eager-* created      | ✅
-no-name       | eager <<<"x"                        | content captured          | ✅
+valid         | eager setup <<<"echo hello"         | content in eager-00-*     | ✅
+custom-order  | eager :50 early <<<"x"              | eager-50-* created        | ✅
+base-range    | eager :99 max <<<"x"                | eager-99-* created        | ✅
+no-name       | eager <<<"x"                        | eager-00.sh created       | ✅
+ord-no-name   | eager :50 <<<"x"                    | eager-50.sh created       | ✅
 
 ---
 
@@ -181,12 +188,13 @@ no-name       | eager <<<"x"                        | content captured          
 
 Scenario        | Invocation                                | Expected                  | ✓/✗
 ----------------|-------------------------------------------|---------------------------|----
-before-anchor   | hook --before npm-install name <<<"x"     | 1-08-hook-* created       | ✅
-after-anchor    | hook --after composer-install name <<<"x"  | 1-11-hook-* created       | ✅
-before-apt      | hook --before apt-install name <<<"x"     | 1-03-hook-* created       | ✅
-after-go        | hook --after go-install name <<<"x"       | 1-15-hook-* created       | ✅
-unknown-anchor  | hook --before nonexistent <<<"x"          | error                     | ✅
-no-name         | hook --before apt-install <<<"x"          | content captured          | ✅
+before-anchor   | hook --before npm name <<<"x"             | hook-before-npm-* created | ✅
+after-anchor    | hook --after composer name <<<"x"         | hook-after-composer-* created | ✅
+before-apt      | hook --before apt name <<<"x"             | hook-before-apt-* created | ✅
+after-go        | hook --after go name <<<"x"               | hook-after-go-* created   | ✅
+custom-order    | hook --before apt :50 name <<<"x"         | hook-before-apt-50-* created | ✅
+no-name         | hook --before apt <<<"x"                  | hook-before-apt-00.sh created | ✅
+no-anchor       | hook name <<<"x"                          | error                     | ✅
 
 ---
 
@@ -194,9 +202,11 @@ no-name         | hook --before apt-install <<<"x"          | content captured  
 
 Scenario     | Invocation                   | Expected                   | ✓/✗
 -------------|------------------------------|----------------------------|----
-valid        | defer setup <<<"echo hello"  | content in 2-00-deferred-* | ✅
-custom-order | defer :50 early <<<"x"       | 2-50-deferred-* created    | ✅
-no-name      | defer <<<"x"                 | content captured           | ✅
+valid        | defer setup <<<"echo hello"  | content in defer-00-*      | ✅
+custom-order | defer :50 early <<<"x"       | defer-50-* created         | ✅
+base-range   | defer :99 max <<<"x"         | defer-99-* created         | ✅
+no-name      | defer <<<"x"                 | defer-00.sh created        | ✅
+ord-no-name  | defer :50 <<<"x"             | defer-50.sh created        | ✅
 
 ---
 
@@ -284,5 +294,5 @@ dockerfile-fifo| RUN ./steward (writerless FIFO) | no hang, reads Stewardfile | 
 
 | ✅ Pass | ❌ Fail | ⚠️ Error |
 |---------|---------|----------|
-| 124 | 0 | 0 |
+| 134 | 0 | 0 |
 
