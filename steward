@@ -31,7 +31,7 @@ function steward:main() {
 	local force=;      args:flag force f; # dynamic scope: read by steward:guard()
 	local dry_run=;    args:flag dry-run d;
 
-	steward:init;
+	steward::init;
 
 	# When sourced (not executed directly), stop here — only export functions, don't run the pipeline.
 	[[ "${BASH_SOURCE[0]}" != "${0}" ]] && return;
@@ -50,7 +50,7 @@ function steward:main() {
 	# Outer subshell: isolates aliases and function definitions so they don't leak into the caller's scope.
 	(
 		# DSL syntactic sugar for Stewardfiles
-		namespace:use "steward:*" as "$namespace";
+		namespace:use "steward:[^:]*" as "$namespace";
 		# Allows `task` to be used instead of function `task foo() { ... }`
 		alias task='function';
 
@@ -61,20 +61,20 @@ function steward:main() {
 				steward:include "$file";
 
 				# Identify functions defined by the Stewardfile
-				funcs="$(comm -13 <(printf "%s\n" "$before") <(declare -F | awk '{print $3}' | sort))"
+				funcs="$(comm -13 <(printf "%s\n" "$before") <(declare -F | awk '{print $3}' | sort))";
 				for func in $funcs; do
 				  [[ -n "$task" && "$func" != "$task" ]] && continue;
 				  # Per-task subshell: guard's `exit 0` terminates only this subshell, not the whole pipeline
 				  ("$func");
-				done
+				done;
 			)
-		done
+		done;
 	);
 
 	steward:apply "$@";
 }
 
-function steward:init() {
+function steward::init() {
 	strict:on;
 
 	rm -fR /tmp/steward;
@@ -82,28 +82,13 @@ function steward:init() {
 
 	# Expose architecture & distro info
 	ARCH="$(dpkg --print-architecture)";
-	DEBIAN_FRONTEND=noninteractive
+	DEBIAN_FRONTEND=noninteractive;
 	STEWARDFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)";
 	STEWARDFILE="$STEWARDFILE_DIR/$(basename "${BASH_SOURCE[0]}")";
 
 	# shellcheck source=/dev/null
 	source /etc/os-release;
 	export ARCH DEBIAN_FRONTEND STEWARDFILE STEWARDFILE_DIR;
-
-	# Ensure curl & CA certs are available (needed by bin, ext, key, src, deb, include)
-	cat <<-'SH' >> /tmp/steward/1-00-internal-prereqs.sh
-		mkdir -p /var/cache/steward;
-
-		# Fresh Docker images or apt clean leave this directory missing or empty — force an update
-		# Check for actual package list files, not just any files (auxfiles dir can exist but is not a package list)
-		if [[ -z "$(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages' -o -name '*_InRelease' 2>/dev/null)" ]]; then
-			apt update -qq;
-		fi
-
-		if ! command -V curl >/dev/null 2>&1 || ! command -V gpg >/dev/null 2>&1; then
-			apt install -qqy --no-install-recommends apt-transport-https ca-certificates curl gpg;
-		fi
-	SH
 }
 
 # @name include
@@ -130,8 +115,7 @@ function steward:include() {
 # @name guard
 # @type keyword
 #
-# @desc Skip the current function if a condition is already met (command exists, file exists, or directory exists).
-# @desc Must be called inside a Stewardfile function (which runs in a subshell). Uses exit 0 to bail out.
+# @desc Conditionally skip task if command/file/directory exists.
 #
 # @usage guard <command>
 # @usage guard --file <file>
@@ -159,6 +143,10 @@ function steward:guard() {
 	return 0;
 }
 
+#
+# Keyword collectors and their apply functions — colocated pairs
+#
+
 # @name key
 # @type keyword
 # @desc Add a GPG keyring for package verification
@@ -172,18 +160,23 @@ function steward:key() {
 	local name=; args:arg name || return;
 	local url=;  args:arg url '^https?://' || return;
 
+	echo "$name	$url" >> /tmp/steward/key.lst;
+}
 
-	cat <<-SH >> /tmp/steward/1-01-internal-key-setup.sh
-		curl -1fsSLR -z '/var/cache/steward/$name.asc' -o '/var/cache/steward/$name.asc' '$url';
-		if grep -qe '^-----BEGIN PGP PUBLIC KEY BLOCK-----' '/var/cache/steward/$name.asc'; then
-			gpg --dearmor < '/var/cache/steward/$name.asc' > '/usr/share/keyrings/$name.gpg';
+function steward::apply:key() {
+	[[ -f /tmp/steward/key.lst ]] || return 0;
+
+	while IFS=$'\t' read -r name url; do
+		curl -1fsSLR -z "/var/cache/steward/$name.asc" -o "/var/cache/steward/$name.asc" "$url";
+		if grep -qe '^-----BEGIN PGP PUBLIC KEY BLOCK-----' "/var/cache/steward/$name.asc"; then
+			gpg --dearmor < "/var/cache/steward/$name.asc" > "/usr/share/keyrings/$name.gpg";
 		else
-			cp '/var/cache/steward/$name.asc' '/usr/share/keyrings/$name.gpg';
+			cp "/var/cache/steward/$name.asc" "/usr/share/keyrings/$name.gpg";
 		fi
 
-		chown root:root '/usr/share/keyrings/$name.gpg';
-		chmod u+rw,go+r '/usr/share/keyrings/$name.gpg';
-	SH
+		chown root:root "/usr/share/keyrings/$name.gpg";
+		chmod u+rw,go+r "/usr/share/keyrings/$name.gpg";
+	done < /tmp/steward/key.lst;
 }
 
 # @name src
@@ -202,14 +195,7 @@ function steward:src() {
 	local ARGS=("$@");
 
 	local url=;    args:arg -o url '.deb$';
-	if [[ -n "$url" ]]; then
-		file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
-		cat <<-SH >> "/tmp/steward/1-02-internal-src-setup.sh"
-			curl -1fsSLR -z '/var/cache/steward/$file' -o '/var/cache/steward/$file' '$url';
-			apt install -qqy --no-install-recommends '/var/cache/steward/$file';
-		SH
-		return;
-	fi
+	[[ -n "$url" ]] &&  echo "$url" >> /tmp/steward/src.lst && return;
 
 	local no_key=; args:flag no-key "";
 	local name=;   args:arg name || return;
@@ -219,11 +205,25 @@ function steward:src() {
 
 	local signer=; [[ "$no_key" != "true" ]] && signer="[signed-by=/usr/share/keyrings/$name.gpg]";
 
-	cat <<-SH >> /tmp/steward/1-02-internal-src-setup.sh
-		echo 'deb $signer $repo $dist $comp' > '/etc/apt/sources.list.d/$name.list';
-		chown root:root '/etc/apt/sources.list.d/$name.list';
-		chmod u+rw,go+r '/etc/apt/sources.list.d/$name.list';
-	SH
+	echo "$repo	$name	$dist	$comp	$signer" >> /tmp/steward/src.lst;
+}
+
+function steward::apply:src() {
+	[[ -f /tmp/steward/src.lst ]] || return 0;
+
+	while IFS=$'\t' read -r url name dist comp signer; do
+		if [[ "$url" == *.deb ]]; then
+			local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+			curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
+
+			apt install -qqy --no-install-recommends "/var/cache/steward/$file";
+		else
+			echo "deb $signer $url $dist $comp" > "/etc/apt/sources.list.d/$name.list";
+
+			chown root:root "/etc/apt/sources.list.d/$name.list";
+			chmod u+rw,go+r "/etc/apt/sources.list.d/$name.list";
+		fi
+	done < /tmp/steward/src.lst;
 }
 
 # @name apt
@@ -240,35 +240,28 @@ function steward:apt() {
 	local try=;  args:flag try "";
 	local temp=; args:flag temp "";
 	local name=; args:arg name || return;
-	local mod=;
 
-	if [[ ! -f /tmp/steward/1-04-internal-apt-install.sh ]]; then
-		cat <<-'SH' > "/tmp/steward/1-04-internal-apt-install.sh"
-			command -v apt >/dev/null 2>&1 || (echo "apt is not installed" && exit 1);
-
-			apt update -qq;
-
-			cat /tmp/steward/apt-packages-tmp >> /tmp/steward/apt-packages 2>/dev/null;
-			sort -u /tmp/steward/apt-packages 2>/dev/null | xargs -r apt install -qqy --no-install-recommends;
-			sort -u /tmp/steward/apt-packages-try 2>/dev/null | xargs -r apt install -qqy --no-install-recommends || true;
-		SH
-
-		if grep -q buildkit /proc/1/mountinfo 2>/dev/null; then cat <<-'SH' > "/tmp/steward/1-15-internal-apt-cleanup.sh"
-			[[ -f /tmp/steward/apt-packages-tmp ]] &&
-				sort -u /tmp/steward/apt-packages-tmp |
-				while read -r e; do [[ "$e" == *.deb ]] && dpkg-deb --field "$e" Package 2>/dev/null || echo "$e"; done |
-				xargs -r apt remove -qqy;
-			apt autoremove -y --purge;
-			findmnt /var/cache/apt/archives || apt clean;             # Only clean if it wasn't mounted (as a cache)
-			findmnt /var/lib/apt/lists || rm -fR /var/lib/apt/lists;  # Only clean if it wasn't mounted (as a cache)
-			findmnt /var/cache/steward || rm -fr /var/cache/steward;  # Only clean if it wasn't mounted (as a cache)
-		SH
-		fi
+	if [[ "$try" == "true" ]]; then
+		echo "$name" >> /tmp/steward/apt-try.pkgs;
+	else
+		echo "$name" >> /tmp/steward/apt.pkgs;
 	fi
+	if [[ "$temp" == "true" ]]; then
+		echo "$name" >> /tmp/steward/apt-rem.pkgs;
+	fi
+}
 
-	[[ "$try" == "true" ]] && mod="-try";
-	[[ "$temp" == "true" ]] && mod="-tmp";
-	echo "$name" >> "/tmp/steward/apt-packages$mod";
+function steward::apply:apt() {
+	[[ -f /tmp/steward/apt.pkgs ]] || [[ -f /tmp/steward/apt-try.pkgs ]] || return 0;
+
+	apt update -qq;
+
+	if [[ -f /tmp/steward/apt.pkgs ]]; then
+		xargs -r apt install -qqy --no-install-recommends < /tmp/steward/apt.pkgs;
+	fi
+	if [[ -f /tmp/steward/apt-try.pkgs ]]; then
+		xargs -r apt install -qqy --no-install-recommends < /tmp/steward/apt-try.pkgs || true;
+	fi
 }
 
 # @name deb
@@ -286,42 +279,37 @@ function steward:deb() {
 	local try=;  args:flag try "";
 	local temp=; args:flag temp "";
 	local url=;  args:arg url '^https?://' || return;
-	local file="$url";
-	local mod=;
-	local onFail=;
+	local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
 
-	if [[ ! -f /tmp/steward/1-04-internal-apt-install.sh ]]; then
-		cat <<-'SH' > "/tmp/steward/1-04-internal-apt-install.sh"
-			command -v apt >/dev/null 2>&1 || (echo "apt is not installed" && exit 1);
+	echo "$url	$file	$try" >> /tmp/steward/deb.pkgs;
 
-			apt update -qq;
-
-			cat /tmp/steward/apt-packages-tmp >> /tmp/steward/apt-packages 2>/dev/null;
-			sort -u /tmp/steward/apt-packages 2>/dev/null | xargs -r apt install -qqy --no-install-recommends;
-			sort -u /tmp/steward/apt-packages-try 2>/dev/null | xargs -r apt install -qqy --no-install-recommends || true;
-		SH
-
-		if grep -q buildkit /proc/1/mountinfo 2>/dev/null; then cat <<-'SH' > "/tmp/steward/1-15-internal-apt-cleanup.sh"
-			[[ -f /tmp/steward/apt-packages-tmp ]] &&
-				sort -u /tmp/steward/apt-packages-tmp |
-				while read -r e; do [[ "$e" == *.deb ]] && dpkg-deb --field "$e" Package 2>/dev/null || echo "$e"; done |
-				xargs -r apt remove -qqy;
-			apt autoremove -y --purge;
-			findmnt /var/cache/apt/archives || apt clean;             # Only clean if it wasn't mounted (as a cache)
-			findmnt /var/lib/apt/lists || rm -fR /var/lib/apt/lists;  # Only clean if it wasn't mounted (as a cache)
-			findmnt /var/cache/steward || rm -fr /var/cache/steward;  # Only clean if it wasn't mounted (as a cache)
-		SH
-		fi
+	if [[ "$try" == "true" ]]; then
+		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt-try.pkgs;
+	else
+		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt.pkgs;
 	fi
 
-	[[ "$try" == "true" ]] && mod="-try" && onFail="|| true";
-	[[ "$temp" == "true" ]] && mod="-tmp";
-	file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+	if [[ "$temp" == "true" ]]; then
+		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt-rem.pkgs;
+	fi
+}
 
-	cat <<-SH >> "/tmp/steward/1-03-internal-deb-download.sh"
-		curl -1fsSLR -z '/var/cache/apt/archives/$file' -o '/var/cache/apt/archives/$file' '$url' $onFail;
-	SH
-	echo "/var/cache/apt/archives/$file" >> "/tmp/steward/apt-packages$mod";
+function steward::apply:deb() {
+	[[ -f /tmp/steward/deb.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r url file try; do
+		if [[ "$try" == "true" ]]; then
+			curl -1fsSLR -z "/var/cache/apt/archives/$file" -o "/var/cache/apt/archives/$file" "$url" || true;
+		else
+			curl -1fsSLR -z "/var/cache/apt/archives/$file" -o "/var/cache/apt/archives/$file" "$url";
+		fi
+
+		# Resolve .deb path to package name in removal manifest
+		if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
+			local pkg; pkg=$(dpkg-deb --field "/var/cache/apt/archives/$file" Package 2>/dev/null);
+			[[ -n "$pkg" ]] && sed -i "s|^/var/cache/apt/archives/$file$|$pkg|" /tmp/steward/apt-rem.pkgs;
+		fi
+	done < /tmp/steward/deb.pkgs;
 }
 
 # @name bin
@@ -337,12 +325,19 @@ function steward:bin() {
 	local name=; args:arg name || return;
 	local url=;  args:arg url '^https?://' || return;
 
-	cat <<-SH >> /tmp/steward/1-06-internal-bin-install.sh
-		curl -1fsSLR -z '/var/cache/steward/$name' -o '/var/cache/steward/$name' '$url';
-		cp '/var/cache/steward/$name' '/usr/local/bin/$name';
-		chown root:root '/usr/local/bin/$name';
-		chmod +x '/usr/local/bin/$name';
-	SH
+	echo "$name	$url" >> /tmp/steward/bin.pkgs;
+}
+
+function steward::apply:bin() {
+	[[ -f /tmp/steward/bin.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r name url; do
+		curl -1fsSLR -z "/var/cache/steward/$name" -o "/var/cache/steward/$name" "$url";
+		cp "/var/cache/steward/$name" "/usr/local/bin/$name";
+
+		chown root:root "/usr/local/bin/$name";
+		chmod +x "/usr/local/bin/$name";
+	done < /tmp/steward/bin.pkgs;
 }
 
 # @name tar
@@ -362,24 +357,27 @@ function steward:tar() {
 	local path=; args:arg path || return;
 	local url=;  args:arg url '^https?://' || return;
 
-	local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
-	cat <<-SH >> /tmp/steward/1-07-internal-tar-install.sh
-		curl -1fsSLR -z '/var/cache/steward/$file' -o '/var/cache/steward/$file' '$url';
-		_tmpdir=\$(mktemp -d);
-		tar xzf '/var/cache/steward/$file' -C "\$_tmpdir";
-		cp "\$_tmpdir/$path" '/usr/local/bin/$name';
-		chown root:root '/usr/local/bin/$name';
-		chmod +x '/usr/local/bin/$name';
-	SH
-	if [[ "$keep" == "true" ]]; then
-		cat <<-SH >> /tmp/steward/1-07-internal-tar-install.sh
-			mkdir -p '/opt/$name';
-			cp -a "\$_tmpdir"/. '/opt/$name/';
-		SH
-	fi
-	cat <<-SH >> /tmp/steward/1-07-internal-tar-install.sh
-		rm -fR "\$_tmpdir";
-	SH
+	echo "$name	$path	$url	$keep" >> /tmp/steward/tar.pkgs;
+}
+
+function steward::apply:tar() {
+	[[ -f /tmp/steward/tar.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r name path url keep; do
+		local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+		curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
+
+		local dir; [[ "$keep" == "true" ]] && dir="/opt/$name" || dir="$(mktemp -d)";
+		mkdir -p "$dir";
+
+		tar xzf "/var/cache/steward/$file" -C "$dir";
+		cp "$dir/$path" "/usr/local/bin/$name";
+
+		chown root:root "/usr/local/bin/$name";
+		chmod +x "/usr/local/bin/$name";
+
+		[[ "$keep" != "true" ]] && rm -fR "$dir";
+	done < /tmp/steward/tar.pkgs;
 }
 
 # @name zip
@@ -399,28 +397,33 @@ function steward:zip() {
 	local path=; args:arg path || return;
 	local url=;  args:arg url '^https?://' || return;
 
-	if [[ ! -f /tmp/steward/1-08-internal-zip-install.sh ]] && ! type -P unzip >/dev/null 2>&1; then
-		steward:apt --temp unzip;
-	fi
+	echo "$name	$path	$url	$keep" >> /tmp/steward/zip.pkgs;
+}
 
-	local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
-	cat <<-SH >> /tmp/steward/1-08-internal-zip-install.sh
-		curl -1fsSLR -z '/var/cache/steward/$file' -o '/var/cache/steward/$file' '$url';
-		_tmpdir=\$(mktemp -d);
-		unzip -qo '/var/cache/steward/$file' -d "\$_tmpdir";
-		cp "\$_tmpdir/$path" '/usr/local/bin/$name';
-		chown root:root '/usr/local/bin/$name';
-		chmod +x '/usr/local/bin/$name';
-	SH
-	if [[ "$keep" == "true" ]]; then
-		cat <<-SH >> /tmp/steward/1-08-internal-zip-install.sh
-			mkdir -p '/opt/$name';
-			cp -a "\$_tmpdir"/. '/opt/$name/';
-		SH
-	fi
-	cat <<-SH >> /tmp/steward/1-08-internal-zip-install.sh
-		rm -fR "\$_tmpdir";
-	SH
+function steward::prereq:zip() {
+	[[ -f /tmp/steward/zip.pkgs ]] || return 0;
+	type -P unzip >/dev/null 2>&1 && return 0;
+	steward:apt --temp unzip;
+}
+
+function steward::apply:zip() {
+	[[ -f /tmp/steward/zip.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r name path url keep; do
+		local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+		curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
+
+		local dir; [[ "$keep" == "true" ]] && dir="/opt/$name" || dir="$(mktemp -d)";
+		mkdir -p "$dir";
+
+		unzip -qo "/var/cache/steward/$file" -d "$dir";
+		cp "$dir/$path" "/usr/local/bin/$name";
+
+		chown root:root "/usr/local/bin/$name";
+		chmod +x "/usr/local/bin/$name";
+
+		[[ "$keep" != "true" ]] && rm -fR "$dir";
+	done < /tmp/steward/zip.pkgs;
 }
 
 # @name ext
@@ -437,11 +440,20 @@ function steward:ext() {
 	local url=;         args:arg url '^https?://' || return;
 	local shell="bash"; args:arg -o shell;
 
-	local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
-	cat <<-SH >> /tmp/steward/1-05-internal-ext-installer.sh
-		curl -1fsSLR -z '/var/cache/steward/$file' -o '/var/cache/steward/$file' '$url';
-		cat '/var/cache/steward/$file' | '$shell' ${ARGS[@]};
-	SH
+	echo "$url	$shell	${ARGS[*]}" >> /tmp/steward/ext.pkgs;
+}
+
+function steward::apply:ext() {
+	[[ -f /tmp/steward/ext.pkgs ]] || return 0;
+
+	local file;
+	while IFS=$'\t' read -r url shell args; do
+		file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
+		curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
+
+		# shellcheck disable=SC2086
+		"$shell" $args < "/var/cache/steward/$file";
+	done < /tmp/steward/ext.pkgs;
 }
 
 # @name npm
@@ -460,28 +472,32 @@ function steward:npm() {
 
 	[[ -z "$dir" && -z "$name" ]] && return 1;
 
-	if [[ ! -f /tmp/steward/npm-packages ]]; then
-		if ! type -P npm >/dev/null 2>&1 && [[ -n "${NODEVS:-}" ]]; then
-			steward:key nodesource https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key;
-			steward:src nodesource "https://deb.nodesource.com/node_${NODEVS}.x" nodistro main;
-		fi
-		if ! type -P npm >/dev/null 2>&1; then
-			steward:apt nodejs;
-		fi
-
-		cat <<-'SH' > "/tmp/steward/1-09-internal-npm-install.sh"
-			while IFS=$'\t' read -r dir pkgs; do
-				[[ "$dir" == "!global" ]] && npm install --global $pkgs && continue;
-				[[ -z "$pkgs" ]]          && (cd "$dir" && npm install) && continue;
-				(cd "$dir" && npm install $pkgs);
-			done < /tmp/steward/npm-packages
-		SH
-	fi
-
 	local key="${dir:-!global}";
-	grep -q "^${key}	" /tmp/steward/npm-packages 2>/dev/null \
-		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/npm-packages \
-		|| echo "${key}	${name}" >> /tmp/steward/npm-packages;
+	grep -q "^${key}	" /tmp/steward/npm.pkgs 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/npm.pkgs \
+		|| echo "${key}	${name}" >> /tmp/steward/npm.pkgs;
+}
+
+function steward::prereq:npm() {
+	[[ -f /tmp/steward/npm.pkgs ]] || return 0;
+	type -P npm >/dev/null 2>&1 && return 0;
+	if [[ -n "${NODEVS:-}" ]]; then
+		steward:key nodesource https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key;
+		steward:src nodesource "https://deb.nodesource.com/node_${NODEVS}.x" nodistro main;
+	fi
+	steward:apt nodejs;
+}
+
+function steward::apply:npm() {
+	[[ -f /tmp/steward/npm.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r dir pkgs; do
+		# shellcheck disable=SC2086
+		[[ "$dir" == "!global" ]] && npm install --global $pkgs && continue;
+		[[ -z "$pkgs" ]]          && (cd "$dir" && npm install) && continue;
+		# shellcheck disable=SC2086
+		(cd "$dir" && npm install $pkgs);
+	done < /tmp/steward/npm.pkgs;
 }
 
 # @name composer
@@ -500,107 +516,120 @@ function steward:composer() {
 
 	[[ -z "$dir" && -z "$name" ]] && return 1;
 
-	if [[ ! -f /tmp/steward/composer-packages ]]; then
-		if ! type -P php >/dev/null 2>&1 && [[ "${ID:-}" == "debian" ]]; then
-			steward:key php https://packages.sury.org/php/apt.gpg;
-			steward:src php "https://packages.sury.org/php/" "$VERSION_CODENAME" main;
-		fi
-		if ! type -P php >/dev/null 2>&1 && [[ "${ID:-}" == "ubuntu" ]]; then
-			steward:key php "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6";
-			steward:src php "https://ppa.launchpadcontent.net/ondrej/php/ubuntu" "$VERSION_CODENAME" main;
-		fi
-		if ! type -P php >/dev/null 2>&1; then
-			steward:apt "php${PHPVS:-}-cli";
-			steward:ext https://getcomposer.org/installer php -- --2 --install-dir=/usr/local/bin --filename=composer;
-		fi
-
-		cat <<-'SH' > "/tmp/steward/1-10-internal-composer-install.sh"
-			while IFS=$'\t' read -r dir pkgs; do
-				pkgs="${pkgs//@/:}";
-				[[ "$dir" == "!global" ]] && composer global require $pkgs && continue;
-				[[ -z "$pkgs" ]]          && (cd "$dir" && composer install) && continue;
-				(cd "$dir" && composer require $pkgs);
-			done < /tmp/steward/composer-packages
-		SH
-	fi
-
 	local key="${dir:-!global}";
-	grep -q "^${key}	" /tmp/steward/composer-packages 2>/dev/null \
-		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/composer-packages \
-		|| echo "${key}	${name}" >> /tmp/steward/composer-packages;
+	grep -q "^${key}	" /tmp/steward/composer.pkgs 2>/dev/null    &&
+		sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/composer.pkgs ||
+		echo "${key}	${name}" >> /tmp/steward/composer.pkgs;
+}
+
+function steward::prereq:composer() {
+	[[ -f /tmp/steward/composer.pkgs ]] || return 0;
+	type -P php >/dev/null 2>&1 && return 0;
+	if [[ "${ID:-}" == "debian" ]]; then
+		steward:key php https://packages.sury.org/php/apt.gpg;
+		steward:src php "https://packages.sury.org/php/" "$VERSION_CODENAME" main;
+	fi
+	if [[ "${ID:-}" == "ubuntu" ]]; then
+		steward:key php "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6";
+		steward:src php "https://ppa.launchpadcontent.net/ondrej/php/ubuntu" "$VERSION_CODENAME" main;
+	fi
+	steward:apt "php${PHPVS:-}-cli";
+	steward:ext https://getcomposer.org/installer php -- --2 --install-dir=/usr/local/bin --filename=composer;
+}
+
+function steward::apply:composer() {
+	[[ -f /tmp/steward/composer.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r dir pkgs; do
+		pkgs="${pkgs//@/:}";
+		# shellcheck disable=SC2086
+		[[ "$dir" == "!global" ]] && composer global require $pkgs && continue;
+		[[ -z "$pkgs" ]]          && (cd "$dir" && composer install) && continue;
+		# shellcheck disable=SC2086
+		(cd "$dir" && composer require $pkgs);
+	done < /tmp/steward/composer.pkgs;
 }
 
 # @name helm
 # @type keyword
-# @desc Install a Helm chart via `helm upgrade --install` with safe defaults.
-# @desc Runs with --atomic (auto-rollback on failure), --wait (blocks until resources are ready),
-# @desc --timeout (default 60s, configurable), and --create-namespace (when namespace is specified).
-# @desc Multiple charts install in parallel — total wait time is the longest single chart, not the sum.
-# @desc Repository URLs are deduplicated: multiple charts from the same repo trigger only one `helm repo add`.
-# @desc Values can be passed via stdin YAML (heredoc or herestring) instead of --set flags.
+# @desc Install a Helm chart via `helm upgrade --install --atomic --wair --create-namespace --namespace ... --timeout ...` with safe defaults.
 #
-# @usage helm [namespace/]<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]
+# @usage helm <namespace>/<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]
 #
-# @arg  [namespace/]<release> -- Release name, optionally prefixed with namespace/ (creates namespace if missing)
+# @arg  <namespace>/<release> -- Namespace and release name separated by / (creates namespace if missing)
 # @arg  <chart[@version]> -- Chart reference (e.g. bitnami/nginx@1.2.3). Version pinned via --version.
 # @arg  [repo] -- Repository URL to add (chart prefix used as repo name, deduplicated across calls)
 # @opt  [--timeout <seconds>] -- Helm timeout in seconds (default: 60). Applies to both --wait and --atomic.
 function steward:helm() {
 	local ARGS=("$@");
-	local release=;  args:arg release || return;
+	local release=;  args:arg release '.+/.+' || return;
 	local chart=;    args:arg chart || return;
 	local repo=;     args:arg -o repo '^https?://';
 	local timeout=;  args:opt timeout "";
 
-	if [[ ! -f /tmp/steward/1-12-internal-helm-install.sh ]]; then
-		if ! type -P helm >/dev/null 2>&1; then
-			steward:key helm https://packages.buildkite.com/helm-linux/helm-debian/gpgkey;
-			steward:src helm https://packages.buildkite.com/helm-linux/helm-debian/any/ any main;
-			steward:apt helm;
-		fi
+	# Extract namespace from release (namespace/release -> --namespace namespace)
+	local namespace="${release%%/*}";
+	release="${release##*/}";
 
-		cat <<-'SH' > "/tmp/steward/1-11-internal-helm-repo.sh"
-			if [[ -f /tmp/steward/helm-repos ]]; then
-				sort -u /tmp/steward/helm-repos | while IFS=$'\t' read -r name url; do
-					helm repo add "$name" "$url";
-				done
-				helm repo update;
-			fi
-		SH
+	# Extract version from chart (chart@version -> --version version)
+	local version=; [[ "$chart" == *@* ]] && version="${chart##*@}" && chart="${chart%%@*}";
 
-		cat <<-'SH' > "/tmp/steward/1-12-internal-helm-install.sh"
-			source /tmp/steward/helm-cmds;
-			wait;
-			for log in /tmp/steward/helm-log-*; do [[ -f "$log" ]] && cat "$log"; done
-			[[ -f /tmp/steward/helm-failed ]] && echo "helm: failed releases: $(paste -sd, /tmp/steward/helm-failed)" >&2 && exit 1;
-		SH
-	fi
-
-	# Extract namespace from release (namespace/release → --namespace namespace)
-	local namespace=;
-	[[ "$release" == */* ]] && namespace="${release%%/*}" && release="${release##*/}";
-
-	# Extract version from chart (chart@version → --version version)
-	local version=;
-	[[ "$chart" == *@* ]] && version="${chart##*@}" && chart="${chart%%@*}";
-
-	[[ -n "$repo" ]] && echo "${chart%%/*}	${repo}" >> /tmp/steward/helm-repos;
+	[[ -n "$repo" ]] && echo "${chart%%/*}	$repo" >> /tmp/steward/helm.lst;
 
 	# Accept YAML values from stdin if provided
 	local values=;
-	[[ ! -t 0 ]] && values="$(cat)" 2>/dev/null;
+	if read -t 0; then
+		cat > "/tmp/steward/helm.${release}.yml" 2>/dev/null;
+		if [[ -s "/tmp/steward/helm.${release}.yml" ]]; then
+			values="/tmp/steward/helm.${release}.yml";
+		else
+			rm -f "/tmp/steward/helm.${release}.yml";
+		fi
+	fi
 
-	local _args=(
-		--install "$release" "$chart"
-		--atomic --wait --timeout "${timeout:-60}s"
-		--namespace "$namespace" --create-namespace
-		--version "$version"
-	)
-	[[ -n "$values" ]] && _args+=(--values -);
+	echo "$release	$chart	$namespace	$version	${timeout:-60}	$values" >> /tmp/steward/helm.pkgs;
+}
 
-	cat <<-SH >> /tmp/steward/helm-cmds
-		{ helm upgrade ${_args[@]} ${values:+<<< "$values"} > /tmp/steward/helm-log-${release} 2>&1 || echo "$release" >> /tmp/steward/helm-failed; } &
-	SH
+function steward::prereq:helm() {
+	[[ -f /tmp/steward/helm.pkgs ]] || return 0;
+	type -P helm >/dev/null 2>&1 && return 0;
+	steward:key helm https://packages.buildkite.com/helm-linux/helm-debian/gpgkey;
+	steward:src helm https://packages.buildkite.com/helm-linux/helm-debian/any/ any main;
+	steward:apt helm;
+}
+
+function steward::apply:helm() {
+	[[ -f /tmp/steward/helm.pkgs ]] || return 0;
+
+	# Add repos
+	if [[ -f /tmp/steward/helm.lst ]]; then
+		while IFS=$'\t' read -r name url; do
+			helm repo add "$name" "$url";
+		done < /tmp/steward/helm.lst;
+		helm repo update;
+	fi
+
+	# Install releases in parallel
+	while IFS=$'\t' read -r release chart namespace version timeout values; do
+		local -a args=(
+			--install "$release" "$chart"
+			--atomic --wait --timeout "${timeout}s"
+		);
+		args+=(--namespace "$namespace" --create-namespace);
+		[[ -n "$version" ]] && args+=(--version "$version");
+		[[ -n "$values" && -f "$values" ]] && args+=(--values "$values");
+
+		{ helm upgrade "${args[@]}" > "/tmp/steward/helm.${release}.log" 2>&1 ||
+			echo "$release" >> /tmp/steward/helm.log; } &
+	done < /tmp/steward/helm.pkgs;
+
+	wait; # Awaits for all of the parallel helm charts to be installed
+
+	for log in /tmp/steward/helm.*.log; do
+		[[ -f "$log" ]] && cat "$log";
+	done;
+
+	[[ -f /tmp/steward/helm.log ]] && echo "helm: failed releases: $(paste -sd, /tmp/steward/helm.log)" >&2 && return 1;
 }
 
 # @name pip
@@ -619,26 +648,30 @@ function steward:pip() {
 
 	[[ -z "$dir" && -z "$name" ]] && return 1;
 
-	if [[ ! -f /tmp/steward/pip-packages ]]; then
-		if ! type -P pip3 >/dev/null 2>&1; then
-			steward:apt --temp python3-pip;
-			steward:apt --temp python3-venv;
-		fi
-
-		cat <<-'SH' > "/tmp/steward/1-13-internal-pip-install.sh"
-			while IFS=$'\t' read -r dir pkgs; do
-				pkgs="${pkgs//@/==}";
-				[[ "$dir" == "!global" ]] && pip3 install --break-system-packages $pkgs && continue;
-				[[ -z "$pkgs" ]]          && (cd "$dir" && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt) && continue;
-				(cd "$dir" && python3 -m venv .venv && .venv/bin/pip install $pkgs);
-			done < /tmp/steward/pip-packages
-		SH
-	fi
-
 	local key="${dir:-!global}";
-	grep -q "^${key}	" /tmp/steward/pip-packages 2>/dev/null \
-		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/pip-packages \
-		|| echo "${key}	${name}" >> /tmp/steward/pip-packages;
+	grep -q "^${key}	" /tmp/steward/pip.pkgs 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/pip.pkgs \
+		|| echo "${key}	${name}" >> /tmp/steward/pip.pkgs;
+}
+
+function steward::prereq:pip() {
+	[[ -f /tmp/steward/pip.pkgs ]] || return 0;
+	type -P pip3 >/dev/null 2>&1 && return 0;
+	steward:apt --temp python3-pip;
+	steward:apt --temp python3-venv;
+}
+
+function steward::apply:pip() {
+	[[ -f /tmp/steward/pip.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r dir pkgs; do
+		pkgs="${pkgs//@/==}";
+		# shellcheck disable=SC2086
+		[[ "$dir" == "!global" ]] && pip3 install --break-system-packages $pkgs && continue;
+		[[ -z "$pkgs" ]]          && (cd "$dir" && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt) && continue;
+		# shellcheck disable=SC2086
+		(cd "$dir" && python3 -m venv .venv && .venv/bin/pip install $pkgs);
+	done < /tmp/steward/pip.pkgs;
 }
 
 # @name go
@@ -657,24 +690,30 @@ function steward:go() {
 
 	[[ -z "$dir" && -z "$name" ]] && return 1;
 
-	if [[ ! -f /tmp/steward/go-packages ]]; then
-		! type -P go >/dev/null 2>&1 && steward:apt golang;
-
-		cat <<-'SH' > "/tmp/steward/1-14-internal-go-install.sh"
-			while IFS=$'\t' read -r dir pkgs; do
-				[[ "$dir" == "!global" ]] && for pkg in $pkgs; do go install "$pkg"; done && continue;
-				[[ -z "$pkgs" ]]          && (cd "$dir" && go mod download) && continue;
-				(cd "$dir" && go get $pkgs);
-			done < /tmp/steward/go-packages
-		SH
-	fi
-
 	[[ -n "$name" && "$name" != *@* ]] && name="${name}@latest";
 
 	local key="${dir:-!global}";
-	grep -q "^${key}	" /tmp/steward/go-packages 2>/dev/null \
-		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/go-packages \
-		|| echo "${key}	${name}" >> /tmp/steward/go-packages;
+	grep -q "^${key}	" /tmp/steward/go.pkgs 2>/dev/null \
+		&& sed -i "s|^${key}	.*|& ${name}|" /tmp/steward/go.pkgs \
+		|| echo "${key}	${name}" >> /tmp/steward/go.pkgs;
+}
+
+function steward::prereq:go() {
+	[[ -f /tmp/steward/go.pkgs ]] || return 0;
+	type -P go >/dev/null 2>&1 && return 0;
+	steward:apt golang;
+}
+
+function steward::apply:go() {
+	[[ -f /tmp/steward/go.pkgs ]] || return 0;
+
+	while IFS=$'\t' read -r dir pkgs; do
+		# shellcheck disable=SC2086
+		[[ "$dir" == "!global" ]] && for pkg in $pkgs; do go install "$pkg"; done && continue;
+		[[ -z "$pkgs" ]]          && (cd "$dir" && go mod download) && continue;
+		# shellcheck disable=SC2086
+		(cd "$dir" && go get $pkgs);
+	done < /tmp/steward/go.pkgs;
 }
 
 # @name eager
@@ -684,62 +723,60 @@ function steward:go() {
 # @usage eager [:ord] [name] <<<"command"
 # @usage eager [:ord] [name] <<SH ... SH
 #
-# @arg  [:ord]	Order of script execution (00-99). Default 00.
-# @arg  [name]	Label.
+# @arg  [:ord] -- Order of script execution (00-99). Default 00.
+# @arg  [name] -- Label.
 function steward:eager() {
 	local ARGS=("$@");
-	local ord="00";  args:arg -o ord '^:([0-9]{2})$';
-	local name=;     args:arg -o name;
+	local ord="00"; args:arg -o ord '^:([0-9]{2})$';
+	local name=;    args:arg -o name '^[A-Za-z0-9_-]+$';
 
-	# bashism: 10# forces base-10: without it, leading zeros (e.g. 08, 09) would be parsed as invalid octal
-	ord=$(printf '0-%02d-eager' $((10#$ord)));
+	ord=$(printf '%02d' $((10#$ord)));
 
-	cat <<-SH >> "/tmp/steward/$ord-$name.sh";
-		echo;
-		echo "--- BEGIN $name";
-		$(cat)
-		echo "=== END $name";
-	SH
+	cat >> "/tmp/steward/eager-${ord}${name:+-$name}.sh";
+}
+
+function steward::apply:eager() {
+	for script in /tmp/steward/eager-*.sh; do
+		# shellcheck source=/dev/null
+		source "$script" || { echo "ERROR: $script" >&2; exit 1; };
+	done;
 }
 
 # @name hook
 # @type keyword
-# @desc Inject shell commands between built-in pipeline stages.
-#       Use --before or --after to anchor relative to a known pipeline stage name.
-#       Stage names are discovered from /tmp/steward/1-NN-internal-<stage>.sh patterns in the source.
+# @desc Run shell commands before/after built-in pipeline stages.
 #
-# @usage hook --before <stage> [name] <<<"command"
-# @usage hook --after <stage> [name] <<<"command"
+# @usage hook --before <stage> [:ord] [name] <<<"command"
+# @usage hook --after <stage> [:ord] [name] <<<"command"
 #
-# @opt  [--before <stage>]	Run just before the named pipeline stage (ordinal - 1).
-# @opt  [--after <stage>]	Run just after the named pipeline stage (ordinal + 1).
-# @arg  [name]			Label.
+# @opt  [--before <stage>] -- Run just before the named pipeline stage.
+# @opt  [--after <stage>] -- Run just after the named pipeline stage.
+# @arg  [:ord] -- Order among hooks on the same stage (00-99). Default 00.
+# @arg  [name] -- Label.
 function steward:hook() {
 	local ARGS=("$@");
 	local before=; args:opt before "";
 	local after=;  args:opt after "";
-	local name=;   args:arg -o name;
+	local ord="00"; args:arg -o ord '^:([0-9]{2})$';
+	local name=;    args:arg -o name '^[A-Za-z0-9_-]+$';
 
 	local anchor="${before:-$after}";
 	[[ -z "$anchor" ]] && echo "hook: --before or --after is required" >&2 && return 1;
 
-	# Discover pipeline ordinals by grepping the source for /tmp/steward/1-NN-internal-<stage>.sh patterns
-	local ord;
-	ord=$(grep -oP '(?<=/tmp/steward/1-)\d{2}(?=-internal-'"$anchor"'\.sh)' "$STEWARDFILE" | head -1);
-	[[ -z "$ord" ]] && echo "hook: unknown anchor '$anchor'" >&2 && return 1;
+	local dir; [[ -n "$before" ]] && dir="before" || dir="after";
+	ord=$(printf '%02d' $((10#$ord)));
 
-	if [[ -n "$before" ]]; then
-		ord=$(printf '1-%02d-hook' $(( 10#$ord - 1 )));
-	else
-		ord=$(printf '1-%02d-hook' $(( 10#$ord + 1 )));
-	fi
+	cat >> "/tmp/steward/hook-${dir}-${anchor}-${ord}${name:+-$name}.sh";
+}
 
-	cat <<-SH >> "/tmp/steward/$ord-$name.sh";
-		echo;
-		echo "--- BEGIN $name";
-		$(cat)
-		echo "=== END $name";
-	SH
+function steward::apply:hook() {
+	local dir;   dir="$1";   shift;
+	local stage; stage="$1"; shift;
+
+	for script in /tmp/steward/hook-"${dir}"-"${stage}"-*.sh; do
+		# shellcheck source=/dev/null
+		source "$script" || { echo "ERROR: $script" >&2; exit 1; };
+	done;
 }
 
 # @name defer
@@ -749,22 +786,23 @@ function steward:hook() {
 # @usage defer [:ord] [name] <<<"command"
 # @usage defer [:ord] [name] <<SH ... SH
 #
-# @arg [:ord]	Order of script execution (00-99). Default 00.
-# @arg [name]	Label
+# @arg  [:ord] -- Order of script execution (00-99). Default 00.
+# @arg  [name] -- Label.
 function steward:defer() {
 	local ARGS=("$@");
 	local ord="00"; args:arg -o ord '^:([0-9]{2})$';
-	local name=;    args:arg -o name;
+	local name=;    args:arg -o name '^[A-Za-z0-9_-]+$';
 
-	# bashism: 10# forces base-10: without it, leading zeros (e.g. 08, 09) would be parsed as invalid octal
-	ord=$(printf '2-%02d-deferred' $((10#$ord)));
+	ord=$(printf '%02d' $((10#$ord)));
 
-	cat <<-SH >> "/tmp/steward/$ord-$name.sh";
-		echo;
-		echo "--- BEGIN $name";
-		$(cat)
-		echo "=== END $name";
-	SH
+	cat >> "/tmp/steward/defer-${ord}${name:+-$name}.sh";
+}
+
+function steward::apply:defer() {
+	for script in /tmp/steward/defer-*.sh; do
+		# shellcheck source=/dev/null
+		source "$script" || { echo "ERROR: $script" >&2; exit 1; };
+	done;
 }
 
 # @name on-amd64
@@ -811,33 +849,101 @@ function steward:in-dev() {
 	fi
 }
 
+#
+# Standalone apply functions (no collector)
+#
+
+function steward::apply:prereqs() {
+	mkdir -p /var/cache/steward;
+
+	# Fresh Docker images or apt clean leave this directory missing or empty — force an update
+	if [[ -z "$(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages' -o -name '*_InRelease' 2>/dev/null)" ]]; then
+		apt update -qq;
+	fi
+
+	if ! command -V curl >/dev/null 2>&1 || ! command -V gpg >/dev/null 2>&1; then
+		apt install -qqy --no-install-recommends apt-transport-https ca-certificates curl gpg;
+	fi
+}
+
+function steward::apply:clean-up() {
+	grep -q buildkit /proc/1/mountinfo 2>/dev/null || return 0;
+
+	if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
+		# Identify packages requested explicitly.
+		sort -m -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs 2>/dev/null;
+
+		# Uninstall all temp packages (unless they were installed explicitly).
+		comm -23 /tmp/steward/apt-rem.pkgs /tmp/steward/apt-keep.pkgs | xargs -r apt remove -qqy;
+	fi
+
+	apt autoremove -y --purge;
+
+	findmnt /var/cache/apt/archives || apt clean;             # Only clean if it wasn't mounted (as a cache)
+	findmnt /var/lib/apt/lists || rm -fR /var/lib/apt/lists;  # Only clean if it wasn't mounted (as a cache)
+	findmnt /var/cache/steward || rm -fr /var/cache/steward;  # Only clean if it wasn't mounted (as a cache)
+}
+
+function steward::dry-run() {
+	for file in /tmp/steward/*; do
+		echo "=== ${file##*/} ===";
+		cat "$file";
+	done;
+}
+
+#
+# Orchestrator
+#
+
 # @type keyword
 # @name apply
-# @desc Execute all queued operations in order (auto-invoked unless steward is importd/sourced)
+# @desc Execute all queued operations in order (auto-invoked unless steward is imported/sourced)
 #
 # @flag [-d|--dry-run] -- Dry run -- read the Stewardfiles, check the syntax & parameters, display what commands would be executed.
 function steward:apply() {
 	local ARGS=("$@");
 	local dry_run=; args:flag dry-run d;
-	local source="source";
 
 	# Run the rest in privileged mode
 	[[ "$EUID" -ne 0 && "$dry_run" != "true" ]] && exec sudo "$0" "$@";
 	# @todo ^^ $0 only applies if not sourced
 
-	# Dry-run prints the queue scripts instead of executing them (swaps `source` for `cat`)
-	[[ "$dry_run" == "true" ]] && source="cat";
+	# If a keyword was used then we will install its prerequisites.
+	steward::prereq:zip;
+	steward::prereq:npm;
+	steward::prereq:composer;
+	steward::prereq:helm;
+	steward::prereq:pip;
+	steward::prereq:go;
 
-	# shellcheck source=/dev/null # We do not depend on the symbols inside this script
-	for script in /tmp/steward/[0-9]-[0-9][0-9]-*.sh; do
-		$source "$script" || { echo "ERROR: Script failed: $script" >&2; exit 1; }
+	# Sort and deduplicate all manifest files (whitelist by extension)
+	for file in /tmp/steward/*.lst /tmp/steward/*.pkgs; do
+		sort -u "$file" -o "$file";
 	done
 
-	if [[ "$dry_run" == "true" ]]; then
-		for f in /tmp/steward/*; do
-			[[ -f "$f" && "$f" != *.sh ]] && echo "=== $f ===" && cat "$f";
-		done
-	fi
+	[[ "$dry_run" == "true" ]] && steward::dry-run && return;
+
+	steward::apply:prereqs;
+
+	steward::apply:eager;
+
+	steward::apply:hook before key;       steward::apply:key;       steward::apply:hook after key;
+	steward::apply:hook before src;       steward::apply:src;       steward::apply:hook after src;
+	steward::apply:hook before deb;       steward::apply:deb;       steward::apply:hook after deb;
+	steward::apply:hook before apt;       steward::apply:apt;       steward::apply:hook after apt;
+	steward::apply:hook before ext;       steward::apply:ext;       steward::apply:hook after ext;
+	steward::apply:hook before bin;       steward::apply:bin;       steward::apply:hook after bin;
+	steward::apply:hook before tar;       steward::apply:tar;       steward::apply:hook after tar;
+	steward::apply:hook before zip;       steward::apply:zip;       steward::apply:hook after zip;
+	steward::apply:hook before npm;       steward::apply:npm;       steward::apply:hook after npm;
+	steward::apply:hook before composer;  steward::apply:composer;  steward::apply:hook after composer;
+	steward::apply:hook before helm;      steward::apply:helm;      steward::apply:hook after helm;
+	steward::apply:hook before pip;       steward::apply:pip;       steward::apply:hook after pip;
+	steward::apply:hook before go;        steward::apply:go;        steward::apply:hook after go;
+
+	steward::apply:defer;
+
+	steward::apply:clean-up;
 }
 
 function steward:help() {
