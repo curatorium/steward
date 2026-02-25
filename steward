@@ -205,13 +205,13 @@ function steward:src() {
 
 	local signer=; [[ "$no_key" != "true" ]] && signer="[signed-by=/usr/share/keyrings/$name.gpg]";
 
-	echo "$repo	$name	$dist	$comp	$signer" >> /tmp/steward/src.lst;
+	echo "$repo	$name	$signer	$dist	$comp" >> /tmp/steward/src.lst;
 }
 
 function steward::apply:src() {
 	[[ -f /tmp/steward/src.lst ]] || return 0;
 
-	while IFS=$'\t' read -r url name dist comp signer; do
+	while IFS=$'\t' read -r url name signer dist comp; do
 		if [[ "$url" == *.deb ]]; then
 			local file; file="$(printf '%s' "$url" | sed -E 's#[^A-Za-z0-9._-]+#-#g')";
 			curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
