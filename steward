@@ -371,12 +371,15 @@ function steward::apply:tar() {
 		mkdir -p "$dir";
 
 		tar xzf "/var/cache/steward/$file" -C "$dir";
-		cp "$dir/$path" "/usr/local/bin/$name";
 
-		chown root:root "/usr/local/bin/$name";
-		chmod +x "/usr/local/bin/$name";
-
-		[[ "$keep" != "true" ]] && rm -fR "$dir";
+		if [[ "$keep" == "true" ]]; then
+			ln -sf "$dir/$path" "/usr/local/bin/$name";
+		else
+			cp "$dir/$path" "/usr/local/bin/$name";
+			chown root:root "/usr/local/bin/$name";
+			chmod +x "/usr/local/bin/$name";
+			rm -fR "$dir";
+		fi
 	done < /tmp/steward/tar.pkgs;
 }
 
@@ -417,12 +420,15 @@ function steward::apply:zip() {
 		mkdir -p "$dir";
 
 		unzip -qo "/var/cache/steward/$file" -d "$dir";
-		cp "$dir/$path" "/usr/local/bin/$name";
 
-		chown root:root "/usr/local/bin/$name";
-		chmod +x "/usr/local/bin/$name";
-
-		[[ "$keep" != "true" ]] && rm -fR "$dir";
+		if [[ "$keep" == "true" ]]; then
+			ln -sf "$dir/$path" "/usr/local/bin/$name";
+		else
+			cp "$dir/$path" "/usr/local/bin/$name";
+			chown root:root "/usr/local/bin/$name";
+			chmod +x "/usr/local/bin/$name";
+			rm -fR "$dir";
+		fi
 	done < /tmp/steward/zip.pkgs;
 }
 
