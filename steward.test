@@ -379,12 +379,7 @@ test:composer:valid() {
 	steward:composer laravel/installer || return 1;
 	grep -qP "^!global\tlaravel/installer$" /tmp/steward/composer.pkgs || return 1;
 	# Hide php so prereqs are generated (apt.pkgs + ext.pkgs)
-	local php_bin; php_bin=$(type -P php 2>/dev/null || true);
-	[[ -n "$php_bin" ]] && mv "$php_bin" "${php_bin}.bak";
-	steward::prereq:composer;
-	local rc=$?;
-	[[ -n "$php_bin" ]] && mv "${php_bin}.bak" "$php_bin";
-	[[ $rc -eq 0 ]] || return 1;
+	PATH= steward::prereq:composer || return 1;
 	grep -q "php.*-cli" /tmp/steward/apt.pkgs || return 1;
 	grep -q "getcomposer.org" /tmp/steward/ext.pkgs || return 1;
 }
@@ -1261,7 +1256,8 @@ MD
 DOCKER_IMAGE="ubuntu:24.04"
 DOCKER_BUILD_CTX="/tmp/docker-build-steward"
 
-DOCKER="sudo -n docker"
+DOCKER="docker"
+docker info >/dev/null 2>&1 || DOCKER="sudo -n docker"
 DOCKER_HOST_DIR="${DOCKER_HOST_DIR:-$SRC_DIR}"
 
 docker:available() {

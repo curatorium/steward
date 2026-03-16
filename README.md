@@ -5,7 +5,7 @@
 ## Installation
 
 ```bash
-curl -1fsSL https://raw.githubusercontent.com/curatorium/steward/main/steward -o /usr/local/bin/steward
+curl -1fsSLR https://github.com/curatorium/steward/releases/latest/download/steward -o /usr/local/bin/steward
 chmod +x /usr/local/bin/steward
 ```
 
@@ -21,8 +21,9 @@ chmod +x /usr/local/bin/steward
 | `[-f\|--force]`   | Force -- skip all guard checks (treat every guard as passed).                                             |
 | `[-d\|--dry-run]` | Dry run -- read the Stewardfiles, check the syntax & parameters, display what commands would be executed. |
 | `[-h\|--help]`    | Prints out the usage guide.                                                                               |
-
-
+| `[-n\|--namespace]`             | Namespace (keyword prefix).                                                                                   |
+| `[-t\|--task]`                  | Run only the specified task (function name) from the Stewardfile.                                             |
+| `[-x\|--trace <lvl: app\|all>]` | Level of trace tracing, "app" traces only calls from this file, "all" also traces dependencies. Default none. |
 
 | Parameter        | Description                                    |
 |------------------|------------------------------------------------|
@@ -199,6 +200,10 @@ npm <name[@version]>
 npm --dir <path> [name[@version]]	
 ```
 
+| Parameter        | Description                                                                      |
+|------------------|----------------------------------------------------------------------------------|
+| `[--dir <path>]` | Project directory. Without name: `npm install`. With name: `npm install <name>`. |
+
 | Parameter          | Description                                                                   |
 |--------------------|-------------------------------------------------------------------------------|
 | `[name[@version]]` | Package name, optionally with @version suffix. Without --dir: global install. |
@@ -212,17 +217,25 @@ composer <name[@version]>
 composer --dir <path> [name[@version]]	
 ```
 
+| Parameter        | Description                                                                                |
+|------------------|--------------------------------------------------------------------------------------------|
+| `[--dir <path>]` | Project directory. Without name: `composer install`. With name: `composer require <name>`. |
+
 | Parameter          | Description                                                                       |
 |--------------------|-----------------------------------------------------------------------------------|
 | `[name[@version]]` | Package name, optionally with @version constraint. Without --dir: global require. |
 
 ### `helm`
 
-Install a Helm chart via `helm upgrade --install --atomic --wair --create-namespace --namespace ... --timeout ...` with safe defaults.	
+Install a Helm chart via `helm upgrade --install --atomic --wait --create-namespace --namespace ... --timeout ...` with safe defaults.	
 
 ```bash
 helm <namespace>/<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]	
 ```
+
+| Parameter               | Description                                                                 |
+|-------------------------|-----------------------------------------------------------------------------|
+| `[--timeout <seconds>]` | Helm timeout in seconds (default: 60). Applies to both --wait and --atomic. |
 
 | Parameter               | Description                                                                       |
 |-------------------------|-----------------------------------------------------------------------------------|
@@ -239,6 +252,10 @@ pip <name[@version]>
 pip --dir <path> [name[@version]]	
 ```
 
+| Parameter        | Description                                                                                                        |
+|------------------|--------------------------------------------------------------------------------------------------------------------|
+| `[--dir <path>]` | Project directory. Without name: venv + `pip install -r requirements.txt`. With name: venv + `pip install <name>`. |
+
 | Parameter          | Description                                                                       |
 |--------------------|-----------------------------------------------------------------------------------|
 | `[name[@version]]` | Package name, optionally with @version constraint. Without --dir: global install. |
@@ -251,6 +268,10 @@ Install Go packages (global by default, local with --dir)
 go <name[@version]>             	
 go --dir <path> [name[@version]]	
 ```
+
+| Parameter        | Description                                                                     |
+|------------------|---------------------------------------------------------------------------------|
+| `[--dir <path>]` | Project directory. Without name: `go mod download`. With name: `go get <name>`. |
 
 | Parameter          | Description                                                                              |
 |--------------------|------------------------------------------------------------------------------------------|
@@ -278,6 +299,11 @@ Run shell commands before/after built-in pipeline stages.
 hook --before <stage> [:ord] [name] <<<"command"	
 hook --after <stage> [:ord] [name] <<<"command" 	
 ```
+
+| Parameter            | Description                               |
+|----------------------|-------------------------------------------|
+| `[--before <stage>]` | Run just before the named pipeline stage. |
+| `[--after <stage>]`  | Run just after the named pipeline stage.  |
 
 | Parameter | Description                                              |
 |-----------|----------------------------------------------------------|

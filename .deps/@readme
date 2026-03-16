@@ -39,7 +39,7 @@ cat <<-MD
 	## Installation
 
 	$BEGIN_CODE
-	curl -1fsSL https://raw.githubusercontent.com/curatorium/steward/main/steward -o /usr/local/bin/steward
+	curl -1fsSLR https://github.com/curatorium/steward/releases/latest/download/steward -o /usr/local/bin/steward
 	chmod +x /usr/local/bin/steward
 	$END_CODE
 
@@ -52,13 +52,9 @@ cat <<-MD
 	xMD
 	)
 
-	$([[ -n "$(docs:tag -f md steward flag)" ]] && cat <<-xMD
+	$([[ -n "$(docs:tag -f md steward flag)$(docs:tag -f md steward opt)" ]] && cat <<-xMD
 		$(docs:tag -f md steward flag)
-	xMD
-	)
-
-	$([[ -n "$(docs:tag -f md steward option)" ]] && cat <<-xMD
-		$(docs:tag -f md steward option)
+		$(docs:tag -f md steward opt | tail -n +3)
 	xMD
 	)
 
@@ -87,16 +83,20 @@ for name in $(docs:list keyword); do
 		MD
 	fi
 
-	if [[ -n "$(docs:tag -f md "$name" flag)" ]]; then
+	if [[ -n "$(docs:tag -f md "$name" flag)" && -n "$(docs:tag -f md "$name" opt)" ]]; then
+		cat <<-MD
+			$(docs:tag -f md "$name" flag)
+			$(docs:tag -f md "$name" opt | tail -n +3)
+
+		MD
+	elif [[ -n "$(docs:tag -f md "$name" flag)" ]]; then
 		cat <<-MD
 			$(docs:tag -f md "$name" flag)
 
 		MD
-	fi
-
-	if [[ -n "$(docs:tag -f md "$name" option)" ]]; then
+	elif [[ -n "$(docs:tag -f md "$name" opt)" ]]; then
 		cat <<-MD
-			$(docs:tag -f md "$name" option)
+			$(docs:tag -f md "$name" opt)
 
 		MD
 	fi

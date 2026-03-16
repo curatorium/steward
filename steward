@@ -558,7 +558,7 @@ function steward::apply:composer() {
 
 # @name helm
 # @type keyword
-# @desc Install a Helm chart via `helm upgrade --install --atomic --wair --create-namespace --namespace ... --timeout ...` with safe defaults.
+# @desc Install a Helm chart via `helm upgrade --install --atomic --wait --create-namespace --namespace ... --timeout ...` with safe defaults.
 #
 # @usage helm <namespace>/<release> <chart[@version]> [repo] [--timeout <seconds>] [<<<yaml]
 #
