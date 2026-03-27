@@ -499,8 +499,15 @@ function steward::apply:npm() {
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
-		[[ "$dir" == "!global" ]] && npm install --global $pkgs && continue;
-		[[ -z "$pkgs" ]]          && (cd "$dir" && npm install) && continue;
+		if [[ "$dir" == "!global" ]]; then
+			npm install --global $pkgs;
+			continue;
+		fi
+		# shellcheck disable=SC2086
+		if [[ -z "$pkgs" ]]; then
+			(cd "$dir" && npm install);
+			continue;
+		fi
 		# shellcheck disable=SC2086
 		(cd "$dir" && npm install $pkgs);
 	done < /tmp/steward/npm.pkgs;
@@ -549,8 +556,15 @@ function steward::apply:composer() {
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/:}";
 		# shellcheck disable=SC2086
-		[[ "$dir" == "!global" ]] && composer global require $pkgs && continue;
-		[[ -z "$pkgs" ]]          && (cd "$dir" && composer install) && continue;
+		if [[ "$dir" == "!global" ]]; then
+			composer global require $pkgs;
+			continue;
+		fi
+		# shellcheck disable=SC2086
+		if [[ -z "$pkgs" ]]; then
+			(cd "$dir" && composer install);
+			continue;
+		fi
 		# shellcheck disable=SC2086
 		(cd "$dir" && composer require $pkgs);
 	done < /tmp/steward/composer.pkgs;
@@ -673,8 +687,15 @@ function steward::apply:pip() {
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/==}";
 		# shellcheck disable=SC2086
-		[[ "$dir" == "!global" ]] && pip3 install --break-system-packages $pkgs && continue;
-		[[ -z "$pkgs" ]]          && (cd "$dir" && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt) && continue;
+		if [[ "$dir" == "!global" ]]; then
+			pip3 install --break-system-packages $pkgs;
+			continue;
+		fi
+		# shellcheck disable=SC2086
+		if [[ -z "$pkgs" ]]; then
+			(cd "$dir" && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt);
+			continue;
+		fi
 		# shellcheck disable=SC2086
 		(cd "$dir" && python3 -m venv .venv && .venv/bin/pip install $pkgs);
 	done < /tmp/steward/pip.pkgs;
@@ -715,8 +736,15 @@ function steward::apply:go() {
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
-		[[ "$dir" == "!global" ]] && for pkg in $pkgs; do go install "$pkg"; done && continue;
-		[[ -z "$pkgs" ]]          && (cd "$dir" && go mod download) && continue;
+		if [[ "$dir" == "!global" ]]; then
+			for pkg in $pkgs; do go install "$pkg"; done;
+			continue;
+		fi
+		# shellcheck disable=SC2086
+		if [[ -z "$pkgs" ]]; then
+			(cd "$dir" && go mod download);
+			continue;
+		fi
 		# shellcheck disable=SC2086
 		(cd "$dir" && go get $pkgs);
 	done < /tmp/steward/go.pkgs;
