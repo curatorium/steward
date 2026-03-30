@@ -607,7 +607,7 @@ function steward:helm() {
 		fi
 	fi
 
-	echo "$release	$chart	$namespace	$version	${timeout:-60}	$values" >> /tmp/steward/helm.pkgs;
+	echo "$release	$chart	$namespace	${version:--}	${timeout:-60}	$values" >> /tmp/steward/helm.pkgs;
 }
 
 function steward::prereq:helm() {
@@ -621,6 +621,14 @@ function steward::prereq:helm() {
 function steward::apply:helm() {
 	[[ -f /tmp/steward/helm.pkgs ]] || return 0;
 
+	# Wait for kubernetes to be reachable before deploying charts
+	local i=1;
+	while ! kubectl get nodes >/dev/null 2>&1; do
+		((i++));
+		((i > 120)) && { echo "helm: timed out waiting for kubernetes" >&2; return 1; };
+		sleep 1;
+	done
+
 	# Add repos
 	if [[ -f /tmp/steward/helm.lst ]]; then
 		while IFS=$'\t' read -r name url; do
@@ -631,11 +639,13 @@ function steward::apply:helm() {
 
 	# Install releases in parallel
 	while IFS=$'\t' read -r release chart namespace version timeout values; do
+		[[ "$version" == "-" ]] && version="";
+
 		local -a args=(
 			--install "$release" "$chart"
 			--atomic --wait --timeout "${timeout}s"
+			--namespace "$namespace" --create-namespace
 		);
-		args+=(--namespace "$namespace" --create-namespace);
 		[[ -n "$version" ]] && args+=(--version "$version");
 		[[ -n "$values" && -f "$values" ]] && args+=(--values "$values");
 

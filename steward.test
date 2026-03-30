@@ -428,7 +428,7 @@ test:helm:valid() {
 	reset;
 	steward:helm default/my-nginx bitnami/nginx || return 1;
 	[[ -f /tmp/steward/helm.pkgs ]] || return 1;
-	grep -qP "^my-nginx\tbitnami/nginx\tdefault\t\t60\t$" /tmp/steward/helm.pkgs || return 1;
+	grep -qP "^my-nginx\tbitnami/nginx\tdefault\t-\t60\t$" /tmp/steward/helm.pkgs || return 1;
 }
 
 test:helm:with-namespace() {
