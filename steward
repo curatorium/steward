@@ -659,7 +659,10 @@ function steward::apply:helm() {
 		[[ -f "$log" ]] && cat "$log";
 	done
 
-	[[ -f /tmp/steward/helm.log ]] && echo "helm: failed releases: $(paste -sd, /tmp/steward/helm.log)" >&2 && return 1;
+	if [[ -f /tmp/steward/helm.log ]]; then
+		echo "helm: failed releases: $(paste -sd, /tmp/steward/helm.log)" >&2;
+		return 1;
+	fi
 }
 
 # @name pip
