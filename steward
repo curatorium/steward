@@ -115,21 +115,28 @@ function steward:include() {
 # @name guard
 # @type keyword
 #
-# @desc Conditionally skip task if command/file/directory exists.
+# @desc Conditionally skip task if command/file/directory/package exists or an
+#       arbitrary check command succeeds.
 #
 # @usage guard <command>
 # @usage guard --file <file>
 # @usage guard --dir <dir>
+# @usage guard --pkg <apt-package>
+# @usage guard --cmd <shell-fragment>
 #
-# @flag [-f|--file] -- Check for file existence instead of command
-# @flag [-d|--dir] -- Check for directory existence instead of command
-# @arg <name> -- Command name, file path, or directory path to check
+# @flag [-f|--file] -- Check for file existence (-f /path/to/file)
+# @flag [-d|--dir] -- Check for directory existence (-d /path/to/dir)
+# @flag [-p|--pkg] -- Check apt for installed package via `dpkg -s`
+# @flag [-c|--cmd] -- Run an arbitrary shell fragment; exit-0 ⇒ skip task
+# @arg <name> -- Command name, file path, directory path, package, or shell fragment
 function steward:guard() {
 	[[ "${force:-}" == "true" ]] && return 0; # dynamic scope: set in steward:main()
 
 	local ARGS=("$@");
 	local file=; args:flag file f;
 	local dir=;  args:flag dir d;
+	local pkg=;  args:flag pkg p;
+	local cmd=;  args:flag cmd c;
 	local name=; args:arg name;
 
 	# exit (not return): each task runs in its own subshell, exit 0 skips the rest of the task
@@ -137,6 +144,10 @@ function steward:guard() {
 		[[ -f "$name" ]] && exit 0;
 	elif [[ "$dir" == "true" ]]; then
 		[[ -d "$name" ]] && exit 0;
+	elif [[ "$pkg" == "true" ]]; then
+		dpkg -s "$name" >/dev/null 2>&1 && exit 0;
+	elif [[ "$cmd" == "true" ]]; then
+		bash -c "$name" >/dev/null 2>&1 && exit 0;
 	else
 		type -P "$name" >/dev/null 2>&1 && exit 0;
 	fi

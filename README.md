@@ -44,22 +44,26 @@ include <file|url>
 
 ### `guard`
 
-Conditionally skip task if command/file/directory exists.	
+Conditionally skip task if command/file/directory/package exists or an	
 
 ```bash
-guard <command>    	
-guard --file <file>	
-guard --dir <dir>  	
+guard <command>             	
+guard --file <file>         	
+guard --dir <dir>           	
+guard --pkg <apt-package>   	
+guard --cmd <shell-fragment>	
 ```
 
-| Parameter      | Description                                      |
-|----------------|--------------------------------------------------|
-| `[-f\|--file]` | Check for file existence instead of command      |
-| `[-d\|--dir]`  | Check for directory existence instead of command |
+| Parameter      | Description                                         |
+|----------------|-----------------------------------------------------|
+| `[-f\|--file]` | Check for file existence (-f /path/to/file)         |
+| `[-d\|--dir]`  | Check for directory existence (-d /path/to/dir)     |
+| `[-p\|--pkg]`  | Check apt for installed package via `dpkg -s`       |
+| `[-c\|--cmd]`  | Run an arbitrary shell fragment; exit-0 ⇒ skip task |
 
-| Parameter | Description                                         |
-|-----------|-----------------------------------------------------|
-| `<name>`  | Command name, file path, or directory path to check |
+| Parameter | Description                                                         |
+|-----------|---------------------------------------------------------------------|
+| `<name>`  | Command name, file path, directory path, package, or shell fragment |
 
 ### `key`
 

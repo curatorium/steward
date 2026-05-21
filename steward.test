@@ -837,6 +837,38 @@ test:guard:dir-absent() {
 	return 0;
 }
 
+test:guard:pkg-present() {
+	reset;
+	# bash is dpkg-managed on every test box that has bash itself.
+	(steward:guard --pkg bash) && return 0;
+	return 1;
+}
+
+test:guard:pkg-absent() {
+	reset;
+	(steward:guard --pkg nonexistent-pkg-xyz-12345 && echo "continued") || return 1;
+	return 0;
+}
+
+test:guard:cmd-success() {
+	reset;
+	(steward:guard --cmd 'true') && return 0;
+	return 1;
+}
+
+test:guard:cmd-failure() {
+	reset;
+	(steward:guard --cmd 'false' && echo "continued") || return 1;
+	return 0;
+}
+
+test:guard:cmd-multi-word() {
+	reset;
+	# Whole quoted string is one positional arg; bash -c runs it.
+	(steward:guard --cmd 'test -d /tmp && test -r /tmp') && return 0;
+	return 1;
+}
+
 test:guard:does-not-affect-other-functions() {
 	reset;
 	# Define two functions: first one guards (skips), second should still run
