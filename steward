@@ -89,6 +89,16 @@ function steward::init() {
 	# shellcheck source=/dev/null
 	source /etc/os-release;
 	export ARCH DEBIAN_FRONTEND STEWARDFILE STEWARDFILE_DIR;
+
+	# sudo -- including steward's own privilege re-exec -- resets USER/HOME to
+	# root's. In a Stewardfile "$USER"/"$HOME" mean the invoking human: root is
+	# always reachable as a literal, the human only via SUDO_USER. Exported so
+	# parse-time expansions and defer/eager subprocesses agree.
+	if [[ -n "${SUDO_USER:-}" ]]; then
+		USER="$SUDO_USER";
+		HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)";
+		export USER HOME;
+	fi
 }
 
 # @name include
@@ -507,6 +517,8 @@ function steward::prereq:npm() {
 
 function steward::apply:npm() {
 	[[ -f /tmp/steward/npm.pkgs ]] || return 0;
+	# runs as root: keep caches out of the normalized (human) $USER/$HOME
+	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
@@ -563,6 +575,8 @@ function steward::prereq:composer() {
 
 function steward::apply:composer() {
 	[[ -f /tmp/steward/composer.pkgs ]] || return 0;
+	# runs as root: keep caches out of the normalized (human) $USER/$HOME
+	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/:}";
@@ -707,6 +721,8 @@ function steward::prereq:pip() {
 
 function steward::apply:pip() {
 	[[ -f /tmp/steward/pip.pkgs ]] || return 0;
+	# runs as root: keep caches out of the normalized (human) $USER/$HOME
+	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/==}";
@@ -757,6 +773,8 @@ function steward::prereq:go() {
 
 function steward::apply:go() {
 	[[ -f /tmp/steward/go.pkgs ]] || return 0;
+	# runs as root: keep caches/GOPATH out of the normalized (human) $USER/$HOME
+	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
