@@ -12,6 +12,26 @@ generated() {
 	grep -rq -- "$1" /tmp/steward 2>/dev/null;
 }
 
+# Helper: logging stand-in for an external tool, at an explicit path. A real
+# executable, because apply stages reach tools through xargs and absolute paths.
+fake:at() {
+	local path="$1" name="$2" body="${3:-}";
+	mkdir -p "${path%/*}";
+	printf '#!/bin/bash\necho "%s $* @$PWD" >> "%s"\n%s\n' "$name" "$TEST_DIR/cmd.log" "$body" > "$path";
+	chmod +x "$path";
+}
+
+# Helper: put a logging stand-in for an external tool first on PATH
+fake() {
+	fake:at "$TEST_DIR/bin/$1" "$1" "${2:-}";
+	PATH="$TEST_DIR/bin:$PATH";
+}
+
+# Helper: assert a recorded invocation of a faked tool
+logged() {
+	grep -qF -- "$1" "$TEST_DIR/cmd.log" 2>/dev/null;
+}
+
 
 # steward:key Tests
 #------------------------------------------------------------------------------
@@ -35,6 +55,12 @@ test:key:missing-url() {
 	local ARGS=(docker);
 	steward:key docker 2>/dev/null && return 1;
 	return 0;
+}
+
+test:key:non-http-url() {
+	reset;
+	steward:key docker ftp://example.com/key.gpg 2>/dev/null && return 1;
+	[[ ! -f /tmp/steward/key.lst ]] || return 1;
 }
 
 # steward:src Tests
@@ -76,6 +102,18 @@ test:src:missing-name() {
 	return 0;
 }
 
+test:src:multiple-components() {
+	reset;
+	steward:src myrepo https://repo.example.com jammy main universe restricted || return 1;
+	grep -qP "\tjammy\tmain universe restricted$" /tmp/steward/src.lst || return 1;
+}
+
+test:src:signed-by-names-the-keyring() {
+	reset;
+	steward:src docker https://download.docker.com/linux/ubuntu jammy stable || return 1;
+	grep -qF "[signed-by=/usr/share/keyrings/docker.gpg]" /tmp/steward/src.lst || return 1;
+}
+
 # steward:apt Tests
 #------------------------------------------------------------------------------
 
@@ -100,28 +138,27 @@ test:apt:try-flag() {
 test:apt:temp-flag() {
 	reset;
 	steward:apt --temp build-dep || return 1;
-	grep -q "build-dep" /tmp/steward/apt.pkgs || return 1;
-	grep -q "build-dep" /tmp/steward/apt-rem.pkgs || return 1;
+	grep -q "build-dep" /tmp/steward/apt-temp.pkgs || return 1;
+	# must not also read as an explicit request, or clean-up can never subtract it away
+	grep -q "build-dep" /tmp/steward/apt.pkgs 2>/dev/null && return 1;
+	return 0;
 }
 
 test:apt:try-temp-combo() {
 	reset;
 	steward:apt --try --temp optional-build-dep || return 1;
-	grep -q "optional-build-dep" /tmp/steward/apt-try.pkgs || return 1;
-	grep -q "optional-build-dep" /tmp/steward/apt-rem.pkgs || return 1;
+	grep -q "optional-build-dep" /tmp/steward/apt-temp-try.pkgs || return 1;
+	grep -q "optional-build-dep" /tmp/steward/apt-try.pkgs 2>/dev/null && return 1;
+	return 0;
 }
 
 test:apt:temp-explicit-override() {
 	reset;
 	steward:apt --temp build-dep || return 1;
 	steward:apt build-dep || return 1;
-	grep -q "build-dep" /tmp/steward/apt-rem.pkgs || return 1;
+	# recorded as both temporary and explicit; apply:clean-up is what subtracts the two
+	grep -q "build-dep" /tmp/steward/apt-temp.pkgs || return 1;
 	grep -q "build-dep" /tmp/steward/apt.pkgs || return 1;
-	# Both files exist: comm -23 at apply time will exclude build-dep from removal
-	sort -u -o /tmp/steward/apt-rem.pkgs /tmp/steward/apt-rem.pkgs;
-	sort -u -o /tmp/steward/apt.pkgs /tmp/steward/apt.pkgs;
-	comm -23 /tmp/steward/apt-rem.pkgs /tmp/steward/apt.pkgs | grep -q "build-dep" && return 1;
-	return 0;
 }
 
 test:apt:missing-name() {
@@ -138,7 +175,7 @@ test:deb:valid() {
 	steward:deb https://example.com/package.deb || return 1;
 	[[ -f /tmp/steward/deb.pkgs ]] || return 1;
 	grep -q "example.com" /tmp/steward/deb.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt.pkgs || return 1;
 }
 
 test:deb:try-flag() {
@@ -146,23 +183,25 @@ test:deb:try-flag() {
 	steward:deb --try https://example.com/package.deb || return 1;
 	grep -q "example.com" /tmp/steward/deb.pkgs || return 1;
 	grep -qP "\ttrue$" /tmp/steward/deb.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-try.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt-try.pkgs || return 1;
 }
 
 test:deb:temp-flag() {
 	reset;
 	steward:deb --temp https://example.com/package.deb || return 1;
 	grep -q "example.com" /tmp/steward/deb.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-rem.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt-temp.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt.pkgs 2>/dev/null && return 1;
+	return 0;
 }
 
 test:deb:try-temp-combo() {
 	reset;
 	steward:deb --try --temp https://example.com/package.deb || return 1;
 	grep -qP "\ttrue$" /tmp/steward/deb.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-try.pkgs || return 1;
-	grep -q "/var/cache/apt/archives/" /tmp/steward/apt-rem.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt-temp-try.pkgs || return 1;
+	grep -q "/var/cache/steward/" /tmp/steward/apt-try.pkgs 2>/dev/null && return 1;
+	return 0;
 }
 
 test:deb:missing-url() {
@@ -175,6 +214,13 @@ test:deb:invalid-url() {
 	reset;
 	steward:deb /local/path.deb 2>/dev/null && return 1;
 	return 0;
+}
+
+test:deb:url-slugified-into-filename() {
+	reset;
+	steward:deb "https://example.com/pool/main/pkg_1.0~beta+1_amd64.deb" || return 1;
+	grep -qP "\thttps-example.com-pool-main-pkg_1.0-beta-1_amd64.deb\t" /tmp/steward/deb.pkgs || return 1;
+	grep -qF "/var/cache/steward/https-example.com-pool-main-pkg_1.0-beta-1_amd64.deb" /tmp/steward/apt.pkgs || return 1;
 }
 
 # steward:bin Tests
@@ -197,6 +243,12 @@ test:bin:missing-url() {
 	reset;
 	steward:bin jq 2>/dev/null && return 1;
 	return 0;
+}
+
+test:bin:non-http-url() {
+	reset;
+	steward:bin jq /local/path/jq 2>/dev/null && return 1;
+	[[ ! -f /tmp/steward/bin.pkgs ]] || return 1;
 }
 
 # steward:tar Tests
@@ -311,6 +363,12 @@ test:ext:missing-url() {
 	return 0;
 }
 
+test:ext:defaults-to-bash() {
+	reset;
+	steward:ext https://get.docker.com || return 1;
+	grep -qP "^https://get.docker.com\tbash\t" /tmp/steward/ext.pkgs || return 1;
+}
+
 # steward:npm Tests
 #------------------------------------------------------------------------------
 
@@ -365,6 +423,23 @@ test:npm:local-dir-with-name() {
 	grep -qP "^/app\texpress$" /tmp/steward/npm.pkgs || return 1;
 }
 
+test:npm:separate-dirs-stay-separate() {
+	reset;
+	steward:npm --dir /app-a express || return 1;
+	steward:npm --dir /app-b react || return 1;
+	grep -qP "^/app-a\texpress$" /tmp/steward/npm.pkgs || return 1;
+	grep -qP "^/app-b\treact$" /tmp/steward/npm.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/npm.pkgs) -eq 2 ]] || return 1;
+}
+
+test:npm:same-dir-batched() {
+	reset;
+	steward:npm --dir /app express || return 1;
+	steward:npm --dir /app react || return 1;
+	grep -qP "^/app\texpress react$" /tmp/steward/npm.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/npm.pkgs) -eq 1 ]] || return 1;
+}
+
 test:npm:missing-name() {
 	reset;
 	steward:npm 2>/dev/null && return 1;
@@ -413,6 +488,21 @@ test:composer:local-dir-with-name() {
 	reset;
 	steward:composer --dir /app laravel/installer || return 1;
 	grep -qP "^/app\tlaravel/installer$" /tmp/steward/composer.pkgs || return 1;
+}
+
+test:composer:separate-dirs-stay-separate() {
+	reset;
+	steward:composer --dir /app-a laravel/installer || return 1;
+	steward:composer --dir /app-b phpstan/phpstan || return 1;
+	[[ $(wc -l < /tmp/steward/composer.pkgs) -eq 2 ]] || return 1;
+}
+
+test:composer:same-dir-batched() {
+	reset;
+	steward:composer --dir /app laravel/installer || return 1;
+	steward:composer --dir /app phpstan/phpstan || return 1;
+	grep -qP "^/app\tlaravel/installer phpstan/phpstan$" /tmp/steward/composer.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/composer.pkgs) -eq 1 ]] || return 1;
 }
 
 test:composer:missing-name() {
@@ -504,6 +594,19 @@ test:helm:missing-chart() {
 	return 0;
 }
 
+test:helm:empty-stdin-leaves-no-values() {
+	reset;
+	steward:helm default/my-nginx bitnami/nginx < /dev/null || return 1;
+	[[ ! -f /tmp/steward/helm.my-nginx.yml ]] || return 1;
+	grep -qP "\t60\t$" /tmp/steward/helm.pkgs || return 1;
+}
+
+test:helm:version-and-timeout-together() {
+	reset;
+	steward:helm prod/my-nginx bitnami/nginx@1.2.3 --timeout 300 || return 1;
+	grep -qP "^my-nginx\tbitnami/nginx\tprod\t1\.2\.3\t300\t$" /tmp/steward/helm.pkgs || return 1;
+}
+
 # steward:pip Tests
 #------------------------------------------------------------------------------
 
@@ -542,6 +645,21 @@ test:pip:local-dir-with-name() {
 	reset;
 	steward:pip --dir /app flask || return 1;
 	grep -qP "^/app\tflask$" /tmp/steward/pip.pkgs || return 1;
+}
+
+test:pip:separate-dirs-stay-separate() {
+	reset;
+	steward:pip --dir /app-a flask || return 1;
+	steward:pip --dir /app-b requests || return 1;
+	[[ $(wc -l < /tmp/steward/pip.pkgs) -eq 2 ]] || return 1;
+}
+
+test:pip:same-dir-batched() {
+	reset;
+	steward:pip --dir /app flask || return 1;
+	steward:pip --dir /app requests || return 1;
+	grep -qP "^/app\tflask requests$" /tmp/steward/pip.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/pip.pkgs) -eq 1 ]] || return 1;
 }
 
 test:pip:missing-name() {
@@ -589,6 +707,21 @@ test:go:local-dir-with-name() {
 	reset;
 	steward:go --dir /app github.com/some/pkg || return 1;
 	grep -qP "^/app\tgithub.com/some/pkg@latest$" /tmp/steward/go.pkgs || return 1;
+}
+
+test:go:separate-dirs-stay-separate() {
+	reset;
+	steward:go --dir /app-a github.com/some/a || return 1;
+	steward:go --dir /app-b github.com/some/b || return 1;
+	[[ $(wc -l < /tmp/steward/go.pkgs) -eq 2 ]] || return 1;
+}
+
+test:go:same-dir-batched() {
+	reset;
+	steward:go --dir /app github.com/some/a || return 1;
+	steward:go --dir /app github.com/some/b || return 1;
+	grep -qP "^/app\tgithub.com/some/a@latest github.com/some/b@latest$" /tmp/steward/go.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/go.pkgs) -eq 1 ]] || return 1;
 }
 
 test:go:missing-name() {
@@ -688,6 +821,19 @@ test:eager:ord-without-name() {
 	[[ -f /tmp/steward/eager-50.sh ]] || return 1;
 }
 
+test:eager:same-label-appends() {
+	reset;
+	steward:eager setup <<<"echo one" || return 1;
+	steward:eager setup <<<"echo two" || return 1;
+	[[ "$(cat /tmp/steward/eager-00-setup.sh)" == $'echo one\necho two' ]] || return 1;
+}
+
+test:eager:leading-zero-ord() {
+	reset;
+	steward:eager :05 early <<<"echo x" || return 1;
+	[[ -f /tmp/steward/eager-05-early.sh ]] || return 1;
+}
+
 # steward:hook Tests
 #------------------------------------------------------------------------------
 
@@ -735,6 +881,21 @@ test:hook:no-anchor() {
 	return 0;
 }
 
+test:hook:before-and-after-same-stage() {
+	reset;
+	steward:hook --before apt pre <<<"echo pre" || return 1;
+	steward:hook --after apt post <<<"echo post" || return 1;
+	[[ -f /tmp/steward/hook-before-apt-00-pre.sh ]] || return 1;
+	[[ -f /tmp/steward/hook-after-apt-00-post.sh ]] || return 1;
+}
+
+test:hook:same-label-appends() {
+	reset;
+	steward:hook --before apt setup <<<"echo one" || return 1;
+	steward:hook --before apt setup <<<"echo two" || return 1;
+	[[ "$(cat /tmp/steward/hook-before-apt-00-setup.sh)" == $'echo one\necho two' ]] || return 1;
+}
+
 # steward:defer Tests
 #------------------------------------------------------------------------------
 
@@ -769,6 +930,13 @@ test:defer:ord-without-name() {
 	[[ -f /tmp/steward/defer-50.sh ]] || return 1;
 }
 
+test:defer:same-label-appends() {
+	reset;
+	steward:defer setup <<<"echo one" || return 1;
+	steward:defer setup <<<"echo two" || return 1;
+	[[ "$(cat /tmp/steward/defer-00-setup.sh)" == $'echo one\necho two' ]] || return 1;
+}
+
 # steward:on-amd64 / steward:on-arm64 Tests
 #------------------------------------------------------------------------------
 
@@ -796,6 +964,20 @@ test:on-arm64:skips-on-mismatch() {
 	ARCH=amd64 steward:on-arm64 steward:apt vim-arm64;
 	grep -q "vim-arm64" /tmp/steward/apt.pkgs 2>/dev/null && return 1;
 	return 0;
+}
+
+test:on-amd64:does-not-glob() {
+	reset;
+	touch "$TEST_DIR/decoy-a" "$TEST_DIR/decoy-b";
+	ARCH=amd64 steward:on-amd64 steward:apt '*' || return 1;
+	grep -qxF '*' /tmp/steward/apt.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/apt.pkgs) -eq 1 ]] || return 1;
+}
+
+test:on-amd64:preserves-whitespace() {
+	reset;
+	ARCH=amd64 steward:on-amd64 steward:apt 'pkg with space' || return 1;
+	grep -qxF 'pkg with space' /tmp/steward/apt.pkgs || return 1;
 }
 
 # steward:in-dev Tests
@@ -833,6 +1015,14 @@ test:in-dev:skips-on-unset() {
 	return 0;
 }
 
+test:in-dev:does-not-glob() {
+	reset;
+	touch "$TEST_DIR/decoy-a" "$TEST_DIR/decoy-b";
+	APP_ENV=dev steward:in-dev steward:apt '*' || return 1;
+	grep -qxF '*' /tmp/steward/apt.pkgs || return 1;
+	[[ $(wc -l < /tmp/steward/apt.pkgs) -eq 1 ]] || return 1;
+}
+
 # steward:include Tests
 #------------------------------------------------------------------------------
 
@@ -849,6 +1039,23 @@ test:include:missing-file() {
 	reset;
 	steward:include /nonexistent/file 2>/dev/null && return 1;
 	return 0;
+}
+
+test:include:nested() {
+	reset;
+	echo 'steward:apt inner-pkg' > "$TEST_DIR/inner";
+	echo "steward:include $TEST_DIR/inner" > "$TEST_DIR/outer";
+	echo 'steward:apt outer-pkg' >> "$TEST_DIR/outer";
+	steward:include "$TEST_DIR/outer" || return 1;
+	grep -q "inner-pkg" /tmp/steward/apt.pkgs || return 1;
+	grep -q "outer-pkg" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:include:relative-path() {
+	reset;
+	echo 'steward:apt relative-pkg' > "$TEST_DIR/relative.Stewardfile";
+	steward:include ./relative.Stewardfile || return 1;
+	grep -q "relative-pkg" /tmp/steward/apt.pkgs || return 1;
 }
 
 # steward:guard Tests
@@ -924,6 +1131,37 @@ test:guard:cmd-multi-word() {
 	# Whole quoted string is one positional arg; bash -c runs it.
 	(steward:guard --cmd 'test -d /tmp && test -r /tmp') && return 0;
 	return 1;
+}
+
+test:guard:force-bypasses-file() {
+	reset;
+	touch "$TEST_DIR/present";
+	local out; out=$( force=true; steward:guard --file "$TEST_DIR/present" && echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
+}
+
+test:guard:force-bypasses-dir() {
+	reset;
+	local out; out=$( force=true; steward:guard --dir /tmp && echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
+}
+
+test:guard:force-bypasses-pkg() {
+	reset;
+	local out; out=$( force=true; steward:guard --pkg bash && echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
+}
+
+test:guard:force-bypasses-cmd() {
+	reset;
+	local out; out=$( force=true; steward:guard --cmd 'true' && echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
+}
+
+test:guard:second-guard-still-evaluated() {
+	reset;
+	local out; out=$( steward:guard nonexistent-cmd-xyz-12345; steward:guard --cmd 'false'; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:does-not-affect-other-functions() {
@@ -1058,6 +1296,525 @@ STEW
 	grep -q "pkg-beta" /tmp/steward/apt.pkgs || return 1;
 }
 
+test:cli:help() {
+	local out rc;
+	out=$(cd "$SRC_DIR" && "$STEWARD" --help 2>&1) && rc=0 || rc=$?;
+	[[ $rc -eq 0 ]] || return 1;
+	[[ "$out" == *"USAGE"* && "$out" == *"SYNTAX"* && "$out" == *"Stewardfile"* ]] || return 1;
+}
+
+test:cli:namespace-prefix() {
+	reset;
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run --namespace "st:" <<<'st:apt pkg-namespaced') >/dev/null 2>&1 || return 1;
+	grep -qx "pkg-namespaced" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:trace-app() {
+	reset;
+	local err;
+	err=$( (cd "$SRC_DIR" && "$STEWARD" --dry-run --trace app <<<'steward:apt pkg-traced') 2>&1 >/dev/null ) || return 1;
+	grep -qx "pkg-traced" /tmp/steward/apt.pkgs || return 1;
+	[[ "$err" == *"steward"* ]] || return 1;
+}
+
+test:cli:stewardfile-dist-fallback() {
+	reset;
+	local tmpdir; tmpdir=$(mktemp -d);
+	echo 'steward:apt pkg-from-dist' > "$tmpdir/Stewardfile.dist";
+	ln -s "$SRC_DIR/.deps" "$tmpdir/.deps";
+	(cd "$tmpdir" && "$STEWARD" --dry-run) >/dev/null 2>&1 || { rm -fR "$tmpdir"; return 1; };
+	rm -fR "$tmpdir";
+	grep -qx "pkg-from-dist" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:task-keyword-alias() {
+	reset;
+	local tmpfile; tmpfile=$(mktemp);
+	cat > "$tmpfile" <<'STEW'
+task alpha() { apt pkg-via-task-keyword; }
+STEW
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
+	rm -f "$tmpfile";
+	grep -qx "pkg-via-task-keyword" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:exposes-arch-and-os-release() {
+	reset;
+	local tmpfile; tmpfile=$(mktemp);
+	echo 'steward:apt "pkg-$ARCH-$ID-$VERSION_CODENAME"' > "$tmpfile";
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
+	rm -f "$tmpfile";
+	# shellcheck source=/dev/null
+	local arch id codename; arch=$(dpkg --print-architecture); . /etc/os-release; id="$ID"; codename="$VERSION_CODENAME";
+	grep -qx "pkg-$arch-$id-$codename" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:exposes-stewardfile-dir() {
+	reset;
+	local tmpfile; tmpfile=$(mktemp);
+	echo 'steward:apt "pkg-${STEWARDFILE_DIR//\//-}"' > "$tmpfile";
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
+	rm -f "$tmpfile";
+	grep -q "^pkg--" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:wipes-stale-manifests() {
+	reset;
+	touch /tmp/steward/stale-marker;
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run <<<'steward:apt pkg-fresh') >/dev/null 2>&1 || return 1;
+	[[ ! -e /tmp/steward/stale-marker ]] || return 1;
+	grep -qx "pkg-fresh" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:cli:deduplicates-manifests() {
+	reset;
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run <<<$'steward:apt dup-pkg\nsteward:apt dup-pkg\nsteward:apt other-pkg') >/dev/null 2>&1 || return 1;
+	[[ $(grep -cx "dup-pkg" /tmp/steward/apt.pkgs) -eq 1 ]] || return 1;
+	[[ $(wc -l < /tmp/steward/apt.pkgs) -eq 2 ]] || return 1;
+}
+
+test:cli:missing-file-fails() {
+	reset;
+	(cd "$SRC_DIR" && "$STEWARD" --dry-run /nonexistent/Stewardfile) >/dev/null 2>&1 && return 1;
+	return 0;
+}
+
+test:cli:sourced-exports-without-running() {
+	local out;
+	out=$(cd "$SRC_DIR" && bash -c 'source ./steward >/dev/null 2>&1; declare -F steward:apt >/dev/null && echo EXPORTED; [[ -e /tmp/steward/apt.pkgs ]] && echo APPLIED');
+	[[ "$out" == "EXPORTED" ]] || return 1;
+}
+
+# steward::apply package-manager command shapes
+#------------------------------------------------------------------------------
+
+test:apply:npm:global-command() {
+	reset; printf '!global\tyarn typescript\n' > /tmp/steward/npm.pkgs;
+	( unset SUDO_USER; fake npm; steward::apply:npm; ) || return 1;
+	logged "npm install --global yarn typescript" || return 1;
+}
+
+test:apply:npm:dir-without-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\t\n' "$TEST_DIR/app" > /tmp/steward/npm.pkgs;
+	( unset SUDO_USER; fake npm; steward::apply:npm; ) || return 1;
+	logged "npm install @$TEST_DIR/app" || return 1;
+}
+
+test:apply:npm:dir-with-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\texpress react\n' "$TEST_DIR/app" > /tmp/steward/npm.pkgs;
+	( unset SUDO_USER; fake npm; steward::apply:npm; ) || return 1;
+	logged "npm install express react @$TEST_DIR/app" || return 1;
+}
+
+test:apply:composer:global-command() {
+	reset; printf '!global\tlaravel/installer\n' > /tmp/steward/composer.pkgs;
+	( unset SUDO_USER; fake composer; steward::apply:composer; ) || return 1;
+	logged "composer global require laravel/installer" || return 1;
+}
+
+test:apply:composer:version-constraint-separator() {
+	reset; printf '!global\tlaravel/installer@^4.0\n' > /tmp/steward/composer.pkgs;
+	( unset SUDO_USER; fake composer; steward::apply:composer; ) || return 1;
+	logged "composer global require laravel/installer:^4.0" || return 1;
+}
+
+test:apply:composer:dir-without-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\t\n' "$TEST_DIR/app" > /tmp/steward/composer.pkgs;
+	( unset SUDO_USER; fake composer; steward::apply:composer; ) || return 1;
+	logged "composer install @$TEST_DIR/app" || return 1;
+}
+
+test:apply:composer:dir-with-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\tphpstan/phpstan\n' "$TEST_DIR/app" > /tmp/steward/composer.pkgs;
+	( unset SUDO_USER; fake composer; steward::apply:composer; ) || return 1;
+	logged "composer require phpstan/phpstan @$TEST_DIR/app" || return 1;
+}
+
+test:apply:pip:global-command() {
+	reset; printf '!global\tflask\n' > /tmp/steward/pip.pkgs;
+	( unset SUDO_USER; fake pip3; steward::apply:pip; ) || return 1;
+	logged "pip3 install --break-system-packages flask" || return 1;
+}
+
+test:apply:pip:version-constraint-separator() {
+	reset; printf '!global\tflask@3.0.0\n' > /tmp/steward/pip.pkgs;
+	( unset SUDO_USER; fake pip3; steward::apply:pip; ) || return 1;
+	logged "pip3 install --break-system-packages flask==3.0.0" || return 1;
+}
+
+test:apply:pip:dir-without-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\t\n' "$TEST_DIR/app" > /tmp/steward/pip.pkgs;
+	fake:at "$TEST_DIR/app/.venv/bin/pip" pip;
+	( unset SUDO_USER; fake python3; steward::apply:pip; ) || return 1;
+	logged "python3 -m venv .venv @$TEST_DIR/app" || return 1;
+	logged "pip install -r requirements.txt @$TEST_DIR/app" || return 1;
+}
+
+test:apply:pip:dir-with-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\tflask@3.0.0\n' "$TEST_DIR/app" > /tmp/steward/pip.pkgs;
+	fake:at "$TEST_DIR/app/.venv/bin/pip" pip;
+	( unset SUDO_USER; fake python3; steward::apply:pip; ) || return 1;
+	logged "pip install flask==3.0.0 @$TEST_DIR/app" || return 1;
+}
+
+test:apply:go:global-installs-each-package() {
+	reset; printf '!global\tgithub.com/a/a@latest github.com/b/b@v1.2.3\n' > /tmp/steward/go.pkgs;
+	( unset SUDO_USER; fake go; steward::apply:go; ) || return 1;
+	logged "go install github.com/a/a@latest" || return 1;
+	logged "go install github.com/b/b@v1.2.3" || return 1;
+}
+
+test:apply:go:dir-without-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\t\n' "$TEST_DIR/app" > /tmp/steward/go.pkgs;
+	( unset SUDO_USER; fake go; steward::apply:go; ) || return 1;
+	logged "go mod download @$TEST_DIR/app" || return 1;
+}
+
+test:apply:go:dir-with-packages() {
+	reset; mkdir -p "$TEST_DIR/app"; printf '%s\tgithub.com/a/a@latest\n' "$TEST_DIR/app" > /tmp/steward/go.pkgs;
+	( unset SUDO_USER; fake go; steward::apply:go; ) || return 1;
+	logged "go get github.com/a/a@latest @$TEST_DIR/app" || return 1;
+}
+
+# steward::apply:helm
+#------------------------------------------------------------------------------
+
+test:apply:helm:upgrade-defaults() {
+	reset; printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "helm upgrade --install my-nginx bitnami/nginx --atomic --wait --timeout 60s --namespace default --create-namespace" || return 1;
+}
+
+test:apply:helm:pinned-version() {
+	reset; printf 'my-nginx\tbitnami/nginx\tdefault\t1.2.3\t60\t\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "--version 1.2.3" || return 1;
+}
+
+test:apply:helm:custom-timeout() {
+	reset; printf 'my-nginx\tbitnami/nginx\tdefault\t-\t300\t\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "--timeout 300s" || return 1;
+}
+
+test:apply:helm:values-file() {
+	reset; echo "replicaCount: 3" > /tmp/steward/helm.my-nginx.yml;
+	printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t/tmp/steward/helm.my-nginx.yml\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "--values /tmp/steward/helm.my-nginx.yml" || return 1;
+}
+
+test:apply:helm:adds-and-updates-repos() {
+	reset;
+	printf 'bitnami\thttps://charts.bitnami.com/bitnami\n' > /tmp/steward/helm.lst;
+	printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "helm repo add bitnami https://charts.bitnami.com/bitnami" || return 1;
+	logged "helm repo update" || return 1;
+}
+
+test:apply:helm:installs-every-release() {
+	reset;
+	printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t\nmy-redis\tbitnami/redis\tdata\t-\t60\t\n' > /tmp/steward/helm.pkgs;
+	( fake kubectl; fake helm; steward::apply:helm; ) >/dev/null || return 1;
+	logged "--install my-nginx bitnami/nginx" || return 1;
+	logged "--install my-redis bitnami/redis" || return 1;
+}
+
+test:apply:helm:reports-failed-releases() {
+	reset; printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t\n' > /tmp/steward/helm.pkgs;
+	local out rc;
+	out=$( fake kubectl; fake helm 'exit 1'; steward::apply:helm 2>&1 ) && rc=0 || rc=$?;
+	[[ $rc -eq 1 ]] || return 1;
+	[[ "$out" == *"helm: failed releases: my-nginx"* ]] || return 1;
+}
+
+test:apply:helm:times-out-without-kubernetes() {
+	reset; printf 'my-nginx\tbitnami/nginx\tdefault\t-\t60\t\n' > /tmp/steward/helm.pkgs;
+	local out rc;
+	out=$( fake sleep; fake kubectl 'exit 1'; fake helm; steward::apply:helm 2>&1 ) && rc=0 || rc=$?;
+	[[ $rc -eq 1 ]] || return 1;
+	[[ "$out" == *"timed out waiting for kubernetes"* ]] || return 1;
+	logged "helm upgrade" && return 1;
+	return 0;
+}
+
+# steward::apply:eager / :hook / :defer execution
+#------------------------------------------------------------------------------
+
+test:apply:eager:runs-in-ord-order() {
+	reset;
+	printf 'echo second >> "$TEST_DIR/order.log"\n' > /tmp/steward/eager-50-b.sh;
+	printf 'echo first >> "$TEST_DIR/order.log"\n'  > /tmp/steward/eager-10-a.sh;
+	steward::apply:eager || return 1;
+	[[ "$(cat "$TEST_DIR/order.log")" == $'first\nsecond' ]] || return 1;
+}
+
+test:apply:eager:aborts-on-failure() {
+	reset;
+	printf 'false\n' > /tmp/steward/eager-00-boom.sh;
+	local out rc;
+	out=$( steward::apply:eager 2>&1 ) && rc=0 || rc=$?;
+	[[ $rc -eq 1 ]] || return 1;
+	[[ "$out" == *"ERROR: /tmp/steward/eager-00-boom.sh"* ]] || return 1;
+}
+
+test:apply:eager:noop-without-scripts() {
+	reset;
+	steward::apply:eager || return 1;
+}
+
+test:apply:defer:runs-in-ord-order() {
+	reset;
+	printf 'echo second >> "$TEST_DIR/order.log"\n' > /tmp/steward/defer-50-b.sh;
+	printf 'echo first >> "$TEST_DIR/order.log"\n'  > /tmp/steward/defer-10-a.sh;
+	steward::apply:defer || return 1;
+	[[ "$(cat "$TEST_DIR/order.log")" == $'first\nsecond' ]] || return 1;
+}
+
+test:apply:defer:aborts-on-failure() {
+	reset;
+	printf 'false\n' > /tmp/steward/defer-00-boom.sh;
+	local out rc;
+	out=$( steward::apply:defer 2>&1 ) && rc=0 || rc=$?;
+	[[ $rc -eq 1 ]] || return 1;
+	[[ "$out" == *"ERROR: /tmp/steward/defer-00-boom.sh"* ]] || return 1;
+}
+
+test:apply:hook:runs-matching-stage-only() {
+	reset;
+	printf 'echo before-apt >> "$TEST_DIR/order.log"\n' > /tmp/steward/hook-before-apt-00-a.sh;
+	printf 'echo after-apt  >> "$TEST_DIR/order.log"\n' > /tmp/steward/hook-after-apt-00-b.sh;
+	printf 'echo before-npm >> "$TEST_DIR/order.log"\n' > /tmp/steward/hook-before-npm-00-c.sh;
+	steward::apply:hook before apt || return 1;
+	[[ "$(cat "$TEST_DIR/order.log")" == "before-apt" ]] || return 1;
+	steward::apply:hook after apt || return 1;
+	[[ "$(cat "$TEST_DIR/order.log")" == $'before-apt\nafter-apt' ]] || return 1;
+}
+
+test:apply:hook:runs-in-ord-order() {
+	reset;
+	printf 'echo second >> "$TEST_DIR/order.log"\n' > /tmp/steward/hook-before-apt-50-b.sh;
+	printf 'echo first >> "$TEST_DIR/order.log"\n'  > /tmp/steward/hook-before-apt-10-a.sh;
+	steward::apply:hook before apt || return 1;
+	[[ "$(cat "$TEST_DIR/order.log")" == $'first\nsecond' ]] || return 1;
+}
+
+test:apply:hook:aborts-on-failure() {
+	reset;
+	printf 'false\n' > /tmp/steward/hook-before-apt-00-boom.sh;
+	local out rc;
+	out=$( steward::apply:hook before apt 2>&1 ) && rc=0 || rc=$?;
+	[[ $rc -eq 1 ]] || return 1;
+	[[ "$out" == *"ERROR: /tmp/steward/hook-before-apt-00-boom.sh"* ]] || return 1;
+}
+
+test:apply:hook:noop-without-scripts() {
+	reset;
+	steward::apply:hook before apt || return 1;
+}
+
+# steward::apply:prereqs / :clean-up / dry-run
+#------------------------------------------------------------------------------
+
+test:apply:prereqs:creates-cache-dir() {
+	reset;
+	( strict:on; fake mkdir; fake find 'echo /var/lib/apt/lists/x_Packages'; fake apt; steward::apply:prereqs; ) || return 1;
+	logged "mkdir -p /var/cache/steward" || return 1;
+}
+
+test:apply:prereqs:updates-when-lists-empty() {
+	reset;
+	( strict:on; fake mkdir; fake find; fake apt; steward::apply:prereqs; ) || return 1;
+	logged "apt update -qq" || return 1;
+}
+
+test:apply:prereqs:skips-update-when-lists-present() {
+	reset;
+	( strict:on; fake mkdir; fake find 'echo /var/lib/apt/lists/x_Packages'; fake apt; steward::apply:prereqs; ) || return 1;
+	logged "apt update" && return 1;
+	return 0;
+}
+
+test:apply:prereqs:installs-curl-and-gpg-when-missing() {
+	reset;
+	( strict:on; fake mkdir; fake find 'echo /var/lib/apt/lists/x_Packages'; fake apt;
+	  PATH="$TEST_DIR/bin"; steward::apply:prereqs; ) || return 1;
+	logged "apt install -qqy --no-install-recommends apt-transport-https ca-certificates curl gpg" || return 1;
+}
+
+test:apply:clean-up:skips-outside-buildkit() {
+	reset;
+	printf 'build-dep\n' > /tmp/steward/apt-temp.pkgs;
+	printf 'vim\n' > /tmp/steward/apt.pkgs;
+	( strict:on; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
+	logged "apt" && return 1;
+	return 0;
+}
+
+test:apply:clean-up:removes-temp-packages() {
+	reset;
+	steward:apt --temp build-dep;
+	steward:apt vim;
+	steward:apt --try optional;
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	logged "apt remove -qqy build-dep @" || return 1;
+}
+
+test:apply:clean-up:keeps-explicitly-requested-packages() {
+	reset;
+	steward:apt --temp build-dep;
+	steward:apt vim;
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	grep -F "apt remove" "$TEST_DIR/cmd.log" 2>/dev/null | grep -q "vim" && return 1;
+	return 0;
+}
+
+test:apply:clean-up:removes-lone-temp-package() {
+	reset;
+	steward:apt --temp build-dep;
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	logged "apt remove -qqy build-dep @" || return 1;
+}
+
+test:apply:clean-up:removes-try-temp-package() {
+	reset;
+	steward:apt --try --temp build-dep;
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	logged "apt remove -qqy build-dep @" || return 1;
+}
+
+test:apply:clean-up:keeps-mounted-caches() {
+	reset;
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
+	logged "apt clean" && return 1;
+	[[ -d /var/lib/apt/lists ]] || return 1;
+}
+
+test:dry-run:prints-every-manifest() {
+	reset;
+	printf 'vim\n' > /tmp/steward/apt.pkgs;
+	printf 'docker\thttps://example.com/gpg\n' > /tmp/steward/key.lst;
+	local out; out=$(steward::dry-run);
+	[[ "$out" == *"=== apt.pkgs ==="* ]] || return 1;
+	[[ "$out" == *"=== key.lst ==="* ]] || return 1;
+	[[ "$out" == *"vim"* ]] || return 1;
+}
+
+# steward::prereq:* scheduling
+#------------------------------------------------------------------------------
+
+test:prereq:zip:noop-without-manifest() {
+	reset;
+	( PATH=; steward::prereq:zip; ) || return 1;
+	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
+}
+
+test:prereq:zip:schedules-unzip-when-missing() {
+	reset;
+	steward:zip mytool bin/x https://example.com/tool.zip || return 1;
+	( PATH=; steward::prereq:zip; ) || return 1;
+	grep -qx "unzip" /tmp/steward/apt-temp.pkgs || return 1;
+	grep -qx "unzip" /tmp/steward/apt.pkgs 2>/dev/null && return 1;
+	return 0;
+}
+
+test:prereq:zip:skips-when-unzip-present() {
+	reset;
+	steward:zip mytool bin/x https://example.com/tool.zip || return 1;
+	( fake unzip; steward::prereq:zip; ) || return 1;
+	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
+}
+
+test:prereq:npm:apt-nodejs-without-nodevs() {
+	reset;
+	steward:npm yarn || return 1;
+	( PATH=; unset NODEVS; steward::prereq:npm; ) || return 1;
+	grep -qx "nodejs" /tmp/steward/apt.pkgs || return 1;
+	[[ ! -f /tmp/steward/src.lst ]] || return 1;
+}
+
+test:prereq:npm:nodesource-with-nodevs() {
+	reset;
+	steward:npm yarn || return 1;
+	( PATH=; NODEVS=20; steward::prereq:npm; ) || return 1;
+	grep -q "nodesource" /tmp/steward/key.lst || return 1;
+	grep -q "node_20.x" /tmp/steward/src.lst || return 1;
+	grep -qx "nodejs" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:prereq:composer:sury-on-debian() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	( PATH=; ID=debian; VERSION_CODENAME=bookworm; steward::prereq:composer; ) || return 1;
+	grep -q "packages.sury.org" /tmp/steward/key.lst || return 1;
+	grep -q "bookworm" /tmp/steward/src.lst || return 1;
+}
+
+test:prereq:composer:ondrej-ppa-on-ubuntu() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	( PATH=; ID=ubuntu; VERSION_CODENAME=noble; steward::prereq:composer; ) || return 1;
+	grep -q "ondrej/php" /tmp/steward/src.lst || return 1;
+	grep -q "noble" /tmp/steward/src.lst || return 1;
+}
+
+test:prereq:composer:honours-phpvs() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	( PATH=; PHPVS=8.2; steward::prereq:composer; ) || return 1;
+	grep -qx "php8.2-cli" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:prereq:composer:skips-when-php-present() {
+	reset;
+	steward:composer laravel/installer || return 1;
+	( fake php; steward::prereq:composer; ) || return 1;
+	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
+	[[ ! -f /tmp/steward/ext.pkgs ]] || return 1;
+}
+
+test:prereq:helm:schedules-repo-and-package() {
+	reset;
+	steward:helm default/my-nginx bitnami/nginx || return 1;
+	( PATH=; steward::prereq:helm; ) || return 1;
+	grep -q "buildkite" /tmp/steward/key.lst || return 1;
+	grep -q "helm-debian" /tmp/steward/src.lst || return 1;
+	grep -qx "helm" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:prereq:helm:skips-when-present() {
+	reset;
+	steward:helm default/my-nginx bitnami/nginx || return 1;
+	( fake helm; steward::prereq:helm; ) || return 1;
+	[[ ! -f /tmp/steward/key.lst ]] || return 1;
+	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
+}
+
+test:prereq:pip:schedules-temp-python() {
+	reset;
+	steward:pip flask || return 1;
+	( PATH=; steward::prereq:pip; ) || return 1;
+	grep -qx "python3-pip" /tmp/steward/apt-temp.pkgs || return 1;
+	grep -qx "python3-venv" /tmp/steward/apt-temp.pkgs || return 1;
+	grep -qx "python3-pip" /tmp/steward/apt.pkgs 2>/dev/null && return 1;
+	return 0;
+}
+
+test:prereq:go:schedules-golang() {
+	reset;
+	steward:go github.com/some/pkg || return 1;
+	( PATH=; steward::prereq:go; ) || return 1;
+	grep -qx "golang" /tmp/steward/apt.pkgs || return 1;
+}
+
+test:prereq:go:skips-when-present() {
+	reset;
+	steward:go github.com/some/pkg || return 1;
+	( fake go; steward::prereq:go; ) || return 1;
+	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
+}
+
 # Output
 #------------------------------------------------------------------------------
 
@@ -1072,6 +1829,7 @@ Scenario     | Invocation                      | Expected                  | ✓
 valid        | key docker https://example/gpg  | URL + name in output      | $(t key:valid)
 missing-name | key                             | error                     | $(t key:missing-name)
 missing-url  | key docker                      | error                     | $(t key:missing-url)
+non-http-url | key docker ftp://example/key    | error                     | $(t key:non-http-url)
 
 ---
 
@@ -1084,6 +1842,8 @@ valid-deb-url | src https://example.com/pkg.deb         | URL + dpkg in output  
 no-key-flag   | src --no-key ppa https://repo jammy     | no signed-by in output      | $(t src:no-key-flag)
 minimal-repo  | src myrepo https://repo.example.com     | repo + signed-by, no dist   | $(t src:minimal-repo)
 missing-name  | src                                     | error                       | $(t src:missing-name)
+multi-comp    | src r https://u jammy main universe     | all components in output    | $(t src:multiple-components)
+signed-by     | src docker https://repo jammy stable    | signed-by names the keyring | $(t src:signed-by-names-the-keyring)
 
 ---
 
@@ -1094,9 +1854,9 @@ Scenario     | Invocation          | Expected                 | ✓/✗
 valid        | apt vim             | vim in apt.pkgs          | $(t apt:valid)
 versioned    | apt vim=2:8.2       | version preserved        | $(t apt:versioned)
 try-flag     | apt --try pkg       | pkg in apt-try.pkgs      | $(t apt:try-flag)
-temp-flag    | apt --temp pkg      | pkg in apt.pkgs + apt-rem.pkgs | $(t apt:temp-flag)
-try+temp     | apt --try --temp pkg| pkg in apt-try.pkgs + apt-rem.pkgs | $(t apt:try-temp-combo)
-temp+explicit| apt --temp + apt pkg| pkg excluded from apt-rem.pkgs | $(t apt:temp-explicit-override)
+temp-flag    | apt --temp pkg      | pkg in apt-temp.pkgs only      | $(t apt:temp-flag)
+try+temp     | apt --try --temp pkg| pkg in apt-temp-try.pkgs only  | $(t apt:try-temp-combo)
+temp+explicit| apt --temp + apt pkg| pkg recorded as temp AND explicit | $(t apt:temp-explicit-override)
 missing-name | apt                 | error                    | $(t apt:missing-name)
 
 ---
@@ -1107,10 +1867,11 @@ Scenario    | Invocation                       | Expected            | ✓/✗
 ------------|----------------------------------|---------------------|----
 valid       | deb https://example.com/pkg.deb          | URL in deb.pkgs + path in apt.pkgs     | $(t deb:valid)
 try-flag    | deb --try https://example/pkg.deb        | URL in deb.pkgs + path in apt-try.pkgs | $(t deb:try-flag)
-temp-flag   | deb --temp https://example/pkg.deb       | URL in deb.pkgs + path in apt.pkgs+apt-rem.pkgs | $(t deb:temp-flag)
-try+temp    | deb --try --temp https://example/pkg.deb | path in apt-try.pkgs + apt-rem.pkgs    | $(t deb:try-temp-combo)
+temp-flag   | deb --temp https://example/pkg.deb       | URL in deb.pkgs + path in apt-temp.pkgs only | $(t deb:temp-flag)
+try+temp    | deb --try --temp https://example/pkg.deb | path in apt-temp-try.pkgs only         | $(t deb:try-temp-combo)
 missing-url | deb                                      | error                                  | $(t deb:missing-url)
 invalid-url | deb /local/path.deb                      | error                                  | $(t deb:invalid-url)
+slug-url    | deb https://ex/pkg_1.0~b+1_amd64.deb     | URL slugified into cache filename      | $(t deb:url-slugified-into-filename)
 
 ---
 
@@ -1121,6 +1882,7 @@ Scenario     | Invocation                  | Expected                     | ✓/
 valid        | bin jq https://example/jq   | name + URL + path in output  | $(t bin:valid)
 missing-name | bin                         | error                        | $(t bin:missing-name)
 missing-url  | bin jq                      | error                        | $(t bin:missing-url)
+non-http-url | bin jq /local/path/jq       | error                        | $(t bin:non-http-url)
 
 ---
 
@@ -1158,6 +1920,7 @@ valid       | ext https://get.docker.com  | URL in output   | $(t ext:valid)
 with-shell  | ext https://example.com sh  | shell in output | $(t ext:with-shell)
 with-args   | ext url php -- --2 --dir=x  | args in output  | $(t ext:with-args)
 missing-url | ext                         | error           | $(t ext:missing-url)
+no-shell    | ext https://get.docker.com  | defaults to bash| $(t ext:defaults-to-bash)
 
 ---
 
@@ -1172,6 +1935,8 @@ unused        | (no npm calls)      | no manifest generated     | $(t npm:not-ge
 prereq-skip   | npm x (npm exists)  | no prereqs generated      | $(t npm:prereq-skipped-when-present)
 local-dir     | npm --dir /app      | cd + npm install          | $(t npm:local-dir)
 local-dir+pkg | npm --dir /app expr | cd + npm install expr     | $(t npm:local-dir-with-name)
+two-dirs      | npm --dir a x; --dir b y | one line per dir     | $(t npm:separate-dirs-stay-separate)
+same-dir      | npm --dir a x; --dir a y | batched on one line  | $(t npm:same-dir-batched)
 missing-name  | npm                 | error                     | $(t npm:missing-name)
 
 ---
@@ -1186,6 +1951,8 @@ batched       | composer a; composer b         | 2 entries in manifest       | $
 unused        | (no composer calls)            | no manifest generated       | $(t composer:not-generated-if-unused)
 local-dir     | composer --dir /app            | cd + composer install       | $(t composer:local-dir)
 local-dir+pkg | composer --dir /app pkg        | cd + composer require pkg   | $(t composer:local-dir-with-name)
+two-dirs      | composer --dir a x; --dir b y  | one line per dir            | $(t composer:separate-dirs-stay-separate)
+same-dir      | composer --dir a x; --dir a y  | batched on one line         | $(t composer:same-dir-batched)
 missing-name  | composer                       | error                       | $(t composer:missing-name)
 
 ---
@@ -1206,6 +1973,8 @@ unused          | (no helm calls)                         | no manifest generate
 missing-release | helm                                    | error                        | $(t helm:missing-release)
 missing-ns      | helm my-release bitnami/nginx            | error (no namespace)         | $(t helm:missing-namespace)
 missing-chart   | helm default/my-release                  | error                        | $(t helm:missing-chart)
+empty-stdin     | helm ns/r chart < /dev/null              | no values file written       | $(t helm:empty-stdin-leaves-no-values)
+version+timeout | helm ns/r chart@1.2.3 --timeout 300      | both pinned in manifest      | $(t helm:version-and-timeout-together)
 
 ---
 
@@ -1219,6 +1988,8 @@ batched       | pip a; pip b             | 2 entries in manifest     | $(t pip:b
 unused        | (no pip calls)           | no manifest generated     | $(t pip:not-generated-if-unused)
 local-dir     | pip --dir /app           | venv + requirements.txt   | $(t pip:local-dir)
 local-dir+pkg | pip --dir /app flask     | venv + pip install flask  | $(t pip:local-dir-with-name)
+two-dirs      | pip --dir a x; --dir b y | one line per dir          | $(t pip:separate-dirs-stay-separate)
+same-dir      | pip --dir a x; --dir a y | batched on one line       | $(t pip:same-dir-batched)
 missing-name  | pip                      | error                     | $(t pip:missing-name)
 
 ---
@@ -1233,6 +2004,8 @@ batched       | go a; go b                  | 2 entries in manifest     | $(t go
 unused        | (no go calls)               | no manifest generated     | $(t go:not-generated-if-unused)
 local-dir     | go --dir /app              | cd + go mod download      | $(t go:local-dir)
 local-dir+pkg | go --dir /app pkg           | cd + go get pkg@latest    | $(t go:local-dir-with-name)
+two-dirs      | go --dir a x; --dir b y     | one line per dir          | $(t go:separate-dirs-stay-separate)
+same-dir      | go --dir a x; --dir a y     | batched on one line       | $(t go:same-dir-batched)
 missing-name  | go                          | error                     | $(t go:missing-name)
 
 ---
@@ -1261,6 +2034,8 @@ custom-order  | eager :50 early <<<"x"              | eager-50-* created        
 base-range    | eager :99 max <<<"x"                | eager-99-* created        | $(t eager:base-range)
 no-name       | eager <<<"x"                        | eager-00.sh created       | $(t eager:no-name)
 ord-no-name   | eager :50 <<<"x"                    | eager-50.sh created       | $(t eager:ord-without-name)
+same-label    | eager setup x; eager setup y        | both lines, in order      | $(t eager:same-label-appends)
+leading-zero  | eager :05 early <<<"x"              | eager-05-early.sh created | $(t eager:leading-zero-ord)
 
 ---
 
@@ -1275,6 +2050,8 @@ after-go        | hook --after go name <<<"x"               | hook-after-go-* cr
 custom-order    | hook --before apt :50 name <<<"x"         | hook-before-apt-50-* created | $(t hook:custom-order)
 no-name         | hook --before apt <<<"x"                  | hook-before-apt-00.sh created | $(t hook:no-name)
 no-anchor       | hook name <<<"x"                          | error                     | $(t hook:no-anchor)
+before+after    | hook --before apt; hook --after apt        | both files created        | $(t hook:before-and-after-same-stage)
+same-label      | hook --before apt setup x; ... y           | both lines, in order      | $(t hook:same-label-appends)
 
 ---
 
@@ -1287,6 +2064,7 @@ custom-order | defer :50 early <<<"x"       | defer-50-* created         | $(t d
 base-range   | defer :99 max <<<"x"         | defer-99-* created         | $(t defer:base-range)
 no-name      | defer <<<"x"                 | defer-00.sh created        | $(t defer:no-name)
 ord-no-name  | defer :50 <<<"x"             | defer-50.sh created        | $(t defer:ord-without-name)
+same-label   | defer setup x; defer setup y | both lines, in order       | $(t defer:same-label-appends)
 
 ---
 
@@ -1298,6 +2076,8 @@ amd64-on-amd64 | ARCH=amd64; on-amd64 apt vim   | vim in packages       | $(t on
 amd64-on-arm64 | ARCH=arm64; on-amd64 apt vim   | vim NOT in packages   | $(t on-amd64:skips-on-mismatch)
 arm64-on-arm64 | ARCH=arm64; on-arm64 apt vim   | vim in packages       | $(t on-arm64:executes-on-match)
 arm64-on-amd64 | ARCH=amd64; on-arm64 apt vim   | vim NOT in packages   | $(t on-arm64:skips-on-mismatch)
+no-globbing    | ARCH=amd64; on-amd64 apt '*'   | literal * in packages | $(t on-amd64:does-not-glob)
+whitespace     | on-amd64 apt 'pkg with space'  | argument kept intact  | $(t on-amd64:preserves-whitespace)
 
 ---
 
@@ -1310,6 +2090,7 @@ app-debug-1    | APP_DEBUG=1; in-dev apt vim   | vim in packages       | $(t in-
 debug-set      | DEBUG=1; in-dev apt vim       | vim in packages       | $(t in-dev:executes-on-debug)
 app-env-prod   | APP_ENV=prod; in-dev apt vim  | vim NOT in packages   | $(t in-dev:skips-on-prod)
 env-unset      | in-dev apt vim                | vim NOT in packages   | $(t in-dev:skips-on-unset)
+no-globbing    | APP_ENV=dev; in-dev apt '*'   | literal * in packages | $(t in-dev:does-not-glob)
 
 ---
 
@@ -1319,6 +2100,8 @@ Scenario     | Invocation             | Expected                  | ✓/✗
 -------------|------------------------|---------------------------|----
 local-file   | include test.sf        | included content processed| $(t include:local-file)
 missing-file | include /nonexistent   | error                     | $(t include:missing-file)
+nested       | include a (a includes b) | both files processed    | $(t include:nested)
+relative     | include ./file          | resolved against cwd     | $(t include:relative-path)
 
 ---
 
@@ -1334,6 +2117,16 @@ dir-present     | guard --dir /tmp                | exits subshell (skip)       
 dir-absent      | guard --dir /nonexistent        | continues execution           | $(t guard:dir-absent)
 no-side-effects | guard bash (in func1); func2    | func2 still runs              | $(t guard:does-not-affect-other-functions)
 force-flag      | --force; guard bash              | guard bypassed, task runs     | $(t guard:force-skips-guard)
+pkg-present     | guard --pkg bash                | exits subshell (skip)         | $(t guard:pkg-present)
+pkg-absent      | guard --pkg nonexistent         | continues execution           | $(t guard:pkg-absent)
+cmd-success     | guard --cmd 'true'              | exits subshell (skip)         | $(t guard:cmd-success)
+cmd-failure     | guard --cmd 'false'             | continues execution           | $(t guard:cmd-failure)
+cmd-multi-word  | guard --cmd 'test -d /tmp && …' | exits subshell (skip)         | $(t guard:cmd-multi-word)
+force-file      | force=true; guard --file exists | guard bypassed                | $(t guard:force-bypasses-file)
+force-dir       | force=true; guard --dir /tmp    | guard bypassed                | $(t guard:force-bypasses-dir)
+force-pkg       | force=true; guard --pkg bash    | guard bypassed                | $(t guard:force-bypasses-pkg)
+force-cmd       | force=true; guard --cmd 'true'  | guard bypassed                | $(t guard:force-bypasses-cmd)
+second-guard    | guard absent; guard --cmd false | both evaluated, task runs     | $(t guard:second-guard-still-evaluated)
 
 ---
 
@@ -1351,6 +2144,108 @@ default-file  | steward (with Stewardfile)| Stewardfile used      | $(t cli:defa
 dry-run       | steward --dry-run         | scripts shown, not run| $(t cli:dry-run-no-exec)
 task-filter   | steward --task alpha      | only alpha runs       | $(t cli:task-runs-only-named)
 task-unset    | steward (no --task)       | all functions run     | $(t cli:task-without-flag-runs-all)
+help          | steward --help            | usage guide printed   | $(t cli:help)
+namespace     | steward -n st:            | st:apt keyword works  | $(t cli:namespace-prefix)
+trace         | steward -x app            | trace on stderr       | $(t cli:trace-app)
+dist-fallback | steward (Stewardfile.dist)| .dist file used       | $(t cli:stewardfile-dist-fallback)
+task-keyword  | task alpha() { ... }      | task = function alias | $(t cli:task-keyword-alias)
+env-os        | apt "pkg-\$ARCH-\$ID"     | ARCH/ID/codename set  | $(t cli:exposes-arch-and-os-release)
+env-dir       | apt "pkg-\$STEWARDFILE_DIR" | STEWARDFILE_DIR set | $(t cli:exposes-stewardfile-dir)
+wipes-tmp     | stale file in /tmp/steward| wiped on start        | $(t cli:wipes-stale-manifests)
+dedup         | apt dup; apt dup          | one entry after apply | $(t cli:deduplicates-manifests)
+missing-file  | steward /nonexistent      | error                 | $(t cli:missing-file-fails)
+sourced       | source ./steward          | exports, does not run | $(t cli:sourced-exports-without-running)
+
+---
+
+## steward::apply package managers
+
+Scenario         | Invocation                       | Expected                              | ✓/✗
+-----------------|----------------------------------|---------------------------------------|----
+npm-global       | apply:npm (!global yarn ts)      | npm install --global yarn ts          | $(t apply:npm:global-command)
+npm-dir          | apply:npm (dir, no packages)     | cd dir + npm install                  | $(t apply:npm:dir-without-packages)
+npm-dir+pkg      | apply:npm (dir + packages)       | cd dir + npm install express react    | $(t apply:npm:dir-with-packages)
+composer-global  | apply:composer (!global pkg)     | composer global require pkg           | $(t apply:composer:global-command)
+composer-version | apply:composer (pkg@^4.0)        | @ rewritten to : constraint           | $(t apply:composer:version-constraint-separator)
+composer-dir     | apply:composer (dir, no pkgs)    | cd dir + composer install             | $(t apply:composer:dir-without-packages)
+composer-dir+pkg | apply:composer (dir + packages)  | cd dir + composer require pkg         | $(t apply:composer:dir-with-packages)
+pip-global       | apply:pip (!global flask)        | pip3 install --break-system-packages  | $(t apply:pip:global-command)
+pip-version      | apply:pip (flask@3.0.0)          | @ rewritten to == constraint          | $(t apply:pip:version-constraint-separator)
+pip-dir          | apply:pip (dir, no packages)     | venv + pip install -r requirements    | $(t apply:pip:dir-without-packages)
+pip-dir+pkg      | apply:pip (dir + packages)       | venv + pip install flask==3.0.0       | $(t apply:pip:dir-with-packages)
+go-global        | apply:go (!global a b)           | one go install per package            | $(t apply:go:global-installs-each-package)
+go-dir           | apply:go (dir, no packages)      | cd dir + go mod download              | $(t apply:go:dir-without-packages)
+go-dir+pkg       | apply:go (dir + packages)        | cd dir + go get pkg@latest            | $(t apply:go:dir-with-packages)
+
+---
+
+## steward::apply:helm
+
+Scenario        | Invocation                         | Expected                                | ✓/✗
+----------------|------------------------------------|-----------------------------------------|----
+defaults        | apply:helm (bare release)          | upgrade --install --atomic --wait 60s   | $(t apply:helm:upgrade-defaults)
+version         | apply:helm (version 1.2.3)         | --version 1.2.3                         | $(t apply:helm:pinned-version)
+timeout         | apply:helm (timeout 300)           | --timeout 300s                          | $(t apply:helm:custom-timeout)
+values          | apply:helm (values file)           | --values <file>                         | $(t apply:helm:values-file)
+repos           | apply:helm (helm.lst present)      | helm repo add + helm repo update        | $(t apply:helm:adds-and-updates-repos)
+multi-release   | apply:helm (two releases)          | both installed                          | $(t apply:helm:installs-every-release)
+failure         | apply:helm (helm exits 1)          | returns 1, names the failed release     | $(t apply:helm:reports-failed-releases)
+no-kubernetes   | apply:helm (kubectl always fails)  | times out, no helm upgrade issued       | $(t apply:helm:times-out-without-kubernetes)
+
+---
+
+## steward::apply:eager / :hook / :defer
+
+Scenario        | Invocation                          | Expected                          | ✓/✗
+----------------|-------------------------------------|-----------------------------------|----
+eager-order     | eager-10-a.sh, eager-50-b.sh        | executed in ord order             | $(t apply:eager:runs-in-ord-order)
+eager-failure   | eager script exits non-zero         | ERROR on stderr, exit 1           | $(t apply:eager:aborts-on-failure)
+eager-empty     | no eager scripts                    | no-op, returns 0                  | $(t apply:eager:noop-without-scripts)
+defer-order     | defer-10-a.sh, defer-50-b.sh        | executed in ord order             | $(t apply:defer:runs-in-ord-order)
+defer-failure   | defer script exits non-zero         | ERROR on stderr, exit 1           | $(t apply:defer:aborts-on-failure)
+hook-stage      | before-apt, after-apt, before-npm   | only the named stage runs         | $(t apply:hook:runs-matching-stage-only)
+hook-order      | hook-before-apt-10 / -50            | executed in ord order             | $(t apply:hook:runs-in-ord-order)
+hook-failure    | hook script exits non-zero          | ERROR on stderr, exit 1           | $(t apply:hook:aborts-on-failure)
+hook-empty      | no hook scripts for stage           | no-op, returns 0                  | $(t apply:hook:noop-without-scripts)
+
+---
+
+## steward::apply:prereqs / :clean-up / dry-run
+
+Scenario         | Invocation                          | Expected                                | ✓/✗
+-----------------|-------------------------------------|-----------------------------------------|----
+cache-dir        | apply:prereqs                       | /var/cache/steward created              | $(t apply:prereqs:creates-cache-dir)
+lists-empty      | apply:prereqs (no apt lists)        | apt update                              | $(t apply:prereqs:updates-when-lists-empty)
+lists-present    | apply:prereqs (apt lists present)   | no apt update                           | $(t apply:prereqs:skips-update-when-lists-present)
+curl-gpg-missing | apply:prereqs (empty PATH)          | installs apt-transport-https/curl/gpg   | $(t apply:prereqs:installs-curl-and-gpg-when-missing)
+outside-buildkit | apply:clean-up (plain container)    | no-op, nothing removed                  | $(t apply:clean-up:skips-outside-buildkit)
+temp-removed     | apt --temp build-dep; apt vim       | build-dep removed                       | $(t apply:clean-up:removes-temp-packages)
+explicit-kept    | apt --temp build-dep; apt vim       | vim never removed                       | $(t apply:clean-up:keeps-explicitly-requested-packages)
+temp-alone       | apt --temp build-dep                | build-dep removed                       | $(t apply:clean-up:removes-lone-temp-package)
+try-temp         | apt --try --temp build-dep          | build-dep removed                       | $(t apply:clean-up:removes-try-temp-package)
+mounted-caches   | apply:clean-up (caches mounted)     | apt clean skipped, lists kept           | $(t apply:clean-up:keeps-mounted-caches)
+dry-run          | dry-run (apt.pkgs + key.lst)        | every manifest printed with a header    | $(t dry-run:prints-every-manifest)
+
+---
+
+## steward::prereq:*
+
+Scenario         | Invocation                         | Expected                                | ✓/✗
+-----------------|------------------------------------|-----------------------------------------|----
+zip-unused       | prereq:zip (no zip.pkgs)           | nothing scheduled                       | $(t prereq:zip:noop-without-manifest)
+zip-missing      | prereq:zip (unzip absent)          | apt --temp unzip                        | $(t prereq:zip:schedules-unzip-when-missing)
+zip-present      | prereq:zip (unzip present)         | nothing scheduled                       | $(t prereq:zip:skips-when-unzip-present)
+npm-plain        | prereq:npm (NODEVS unset)          | apt nodejs, no repo                     | $(t prereq:npm:apt-nodejs-without-nodevs)
+npm-nodevs       | prereq:npm (NODEVS=20)             | nodesource key + node_20.x repo         | $(t prereq:npm:nodesource-with-nodevs)
+composer-debian  | prereq:composer (ID=debian)        | sury repo for the codename              | $(t prereq:composer:sury-on-debian)
+composer-ubuntu  | prereq:composer (ID=ubuntu)        | ondrej PPA for the codename             | $(t prereq:composer:ondrej-ppa-on-ubuntu)
+composer-phpvs   | prereq:composer (PHPVS=8.2)        | php8.2-cli scheduled                    | $(t prereq:composer:honours-phpvs)
+composer-present | prereq:composer (php present)      | nothing scheduled                       | $(t prereq:composer:skips-when-php-present)
+helm-missing     | prereq:helm (helm absent)          | buildkite key + repo + apt helm         | $(t prereq:helm:schedules-repo-and-package)
+helm-present     | prereq:helm (helm present)         | nothing scheduled                       | $(t prereq:helm:skips-when-present)
+pip-missing      | prereq:pip (pip3 absent)           | apt --temp python3-pip + python3-venv   | $(t prereq:pip:schedules-temp-python)
+go-missing       | prereq:go (go absent)              | apt golang                              | $(t prereq:go:schedules-golang)
+go-present       | prereq:go (go present)             | nothing scheduled                       | $(t prereq:go:skips-when-present)
 
 MD
 
@@ -1384,6 +2279,60 @@ docker:steward:verify() {
 		bash -c '/app/steward '"$*"' && '"$verify" <<< "$input"
 }
 
+# Fixture image: the artefacts steward downloads, plus an http server for them,
+# so the download-and-install stages run against known bytes, not the internet.
+DOCKER_FIXTURE_IMAGE="steward-fixtures:test"
+DOCKER_FIXTURE_CTX="/tmp/steward-fixtures"
+
+docker:fixtures() {
+	$DOCKER image inspect "$DOCKER_FIXTURE_IMAGE" >/dev/null 2>&1 && return 0;
+
+	rm -fR "$DOCKER_FIXTURE_CTX"; mkdir -p "$DOCKER_FIXTURE_CTX";
+	cat > "$DOCKER_FIXTURE_CTX/Dockerfile" <<-'DOCKERFILE'
+		FROM ubuntu:24.04
+		RUN apt-get update -qq && apt-get install -qqy --no-install-recommends \
+			ca-certificates curl gpg gpg-agent python3 zip sudo
+		RUN set -e; \
+			mkdir -p /fixtures /build/bin /build/deb/DEBIAN; \
+			printf '#!/bin/sh\necho MYTOOL_OK\n' > /build/bin/mytool; \
+			chmod +x /build/bin/mytool; \
+			cp /build/bin/mytool /fixtures/mybin; \
+			tar -czf /fixtures/tool.tgz -C /build bin; \
+			(cd /build && zip -qr /fixtures/tool.zip bin); \
+			printf '#!/bin/sh\necho EXT_OK $*\n' > /fixtures/installer.sh; \
+			printf 'steward:apt wget\n' > /fixtures/remote.Stewardfile; \
+			printf 'Package: steward-fixture\nVersion: 1.0\nArchitecture: all\nMaintainer: steward <t@example.com>\nDescription: fixture package\n' > /build/deb/DEBIAN/control; \
+			dpkg-deb --build /build/deb /fixtures/fixture.deb
+		RUN gpg --batch --passphrase "" --quick-generate-key "steward fixture <fixture@example.com>" default default never && \
+			gpg --armor --export fixture@example.com > /fixtures/key.asc && \
+			gpg --export fixture@example.com > /fixtures/key.gpg
+		RUN useradd -m -s /bin/bash tester && \
+			echo "tester ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/tester
+	DOCKERFILE
+
+	$DOCKER build -t "$DOCKER_FIXTURE_IMAGE" "$DOCKER_FIXTURE_CTX" >/dev/null 2>&1;
+}
+
+# Runs a Stewardfile inside the fixture image, then evaluates a verification
+# fragment. Both are passed through the environment so quoting survives intact.
+docker:fixture:steward() {
+	local input="$1"; shift;
+	local verify="${1:-true}"; (($# > 0)) && shift;
+	$DOCKER run --rm -i -v "$DOCKER_HOST_DIR:/app" -w /app \
+		-e STEWARD_ARGS="$*" -e STEWARD_VERIFY="$verify" -e STEWARD_USER="${STEWARD_RUN_AS:-root}" \
+		"$DOCKER_FIXTURE_IMAGE" bash -c '
+			python3 -m http.server 8000 --directory /fixtures >/dev/null 2>&1 &
+			until curl -sfo /dev/null http://127.0.0.1:8000/; do sleep 0.1; done;
+			cat > /tmp/in.Stewardfile;
+			if [[ "$STEWARD_USER" == root ]]; then
+				/app/steward $STEWARD_ARGS /tmp/in.Stewardfile || exit 1;
+			else
+				chmod 0644 /tmp/in.Stewardfile;
+				su "$STEWARD_USER" -c "cd /app && ./steward $STEWARD_ARGS /tmp/in.Stewardfile" || exit 1;
+			fi
+			eval "$STEWARD_VERIFY"' <<< "$input"
+}
+
 test:docker:apt-installs() {
 	docker:available || return 2;
 	docker:steward:verify "apt curl" "curl --version" >/dev/null 2>&1 || return 1;
@@ -1411,6 +2360,168 @@ test:docker:include-file() {
 	echo "steward:apt wget" > "$SRC_DIR/.include-test-fixture";
 	docker:steward:verify "include .include-test-fixture" "wget --version" >/dev/null 2>&1;
 	local rc=$?; rm -f "$SRC_DIR/.include-test-fixture"; return $rc;
+}
+
+test:docker:key-dearmors-ascii-key() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"key fixture http://127.0.0.1:8000/key.asc" \
+		"test -f /usr/share/keyrings/fixture.gpg &&
+		 ! grep -q BEGIN /usr/share/keyrings/fixture.gpg &&
+		 test \"\$(stat -c %a:%U:%G /usr/share/keyrings/fixture.gpg)\" = 644:root:root" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:key-copies-binary-key() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"key fixture http://127.0.0.1:8000/key.gpg" \
+		"cmp -s /usr/share/keyrings/fixture.gpg /fixtures/key.gpg" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:src-writes-source-list() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"src myrepo http://packages.example.com/repo jammy main universe" \
+		"grep -qxF \"deb [signed-by=/usr/share/keyrings/myrepo.gpg] http://packages.example.com/repo jammy main universe\" /etc/apt/sources.list.d/myrepo.list &&
+		 test \"\$(stat -c %a:%U:%G /etc/apt/sources.list.d/myrepo.list)\" = 644:root:root" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:src-no-key-omits-signed-by() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"src --no-key myrepo http://packages.example.com/repo jammy main" \
+		"! grep -q signed-by /etc/apt/sources.list.d/myrepo.list" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:src-deb-url-installs() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"src http://127.0.0.1:8000/fixture.deb" \
+		"dpkg -s steward-fixture" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:deb-installs() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"deb http://127.0.0.1:8000/fixture.deb" \
+		"dpkg -s steward-fixture" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:bin-installs-executable() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"bin mybin http://127.0.0.1:8000/mybin" \
+		"test -x /usr/local/bin/mybin && test \"\$(mybin)\" = MYTOOL_OK" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:tar-installs-binary() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"tar mytool bin/mytool http://127.0.0.1:8000/tool.tgz" \
+		"test \"\$(mytool)\" = MYTOOL_OK && test ! -d /opt/mytool" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:tar-keep-retains-archive() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"tar --keep mytool bin/mytool http://127.0.0.1:8000/tool.tgz" \
+		"test -d /opt/mytool && test -L /usr/local/bin/mytool && test \"\$(mytool)\" = MYTOOL_OK" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:zip-installs-binary() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"zip mytool bin/mytool http://127.0.0.1:8000/tool.zip" \
+		"test \"\$(mytool)\" = MYTOOL_OK && test ! -d /opt/mytool" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:zip-keep-retains-archive() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"zip --keep mytool bin/mytool http://127.0.0.1:8000/tool.zip" \
+		"test -d /opt/mytool && test -L /usr/local/bin/mytool" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:ext-runs-installer-with-args() {
+	docker:available && docker:fixtures || return 2;
+	local output;
+	output=$(docker:fixture:steward "ext http://127.0.0.1:8000/installer.sh sh -s -- --flag" 2>&1) || return 1;
+	[[ "$output" == *"EXT_OK --flag"* ]] || return 1;
+}
+
+test:docker:eager-runs-before-packages() {
+	docker:available && docker:fixtures || return 2;
+	local output;
+	output=$(docker:fixture:steward "$(cat <<-'STEW'
+		eager first <<<"touch /tmp/eager.marker"
+		steward:apt curl
+		defer last <<<"test -f /tmp/eager.marker && echo EAGER_RAN_FIRST"
+	STEW
+	)" 2>&1) || return 1;
+	[[ "$output" == *"EAGER_RAN_FIRST"* ]] || return 1;
+}
+
+test:docker:hooks-bracket-their-stage() {
+	docker:available && docker:fixtures || return 2;
+	local output;
+	output=$(docker:fixture:steward "$(cat <<-'STEW'
+		hook --before apt pre <<<"echo HOOK_BEFORE_APT"
+		hook --after apt post <<<"dpkg -s wget >/dev/null && echo HOOK_AFTER_APT"
+		steward:apt wget
+	STEW
+	)" 2>&1) || return 1;
+	[[ "$output" == *"HOOK_BEFORE_APT"* ]] || return 1;
+	[[ "$output" == *"HOOK_AFTER_APT"* ]] || return 1;
+}
+
+test:docker:guard-skips-satisfied-task() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward "$(cat <<-'STEW'
+		skipped() {
+			guard --cmd true
+			steward:apt wget
+		}
+	STEW
+	)" "! dpkg -s wget" >/dev/null 2>&1 || return 1;
+}
+
+test:docker:url-stewardfile-argument() {
+	docker:available && docker:fixtures || return 2;
+	$DOCKER run --rm -v "$DOCKER_HOST_DIR:/app" -w /app "$DOCKER_FIXTURE_IMAGE" bash -c '
+		python3 -m http.server 8000 --directory /fixtures >/dev/null 2>&1 &
+		until curl -sfo /dev/null http://127.0.0.1:8000/; do sleep 0.1; done;
+		./steward http://127.0.0.1:8000/remote.Stewardfile && dpkg -s wget' >/dev/null 2>&1 || return 1;
+}
+
+test:docker:pip-installs-package() {
+	docker:available && docker:fixtures || return 2;
+	docker:fixture:steward \
+		"pip six" \
+		"python3 -c \"import six\"" \
+		>/dev/null 2>&1 || return 1;
+}
+
+test:docker:sudo-reexec-installs() {
+	docker:available && docker:fixtures || return 2;
+	STEWARD_RUN_AS=tester docker:fixture:steward "apt wget" "dpkg -s wget" >/dev/null 2>&1 || return 1;
+}
+
+test:docker:sudo-reexec-keeps-invoking-user() {
+	docker:available && docker:fixtures || return 2;
+	local output;
+	output=$(STEWARD_RUN_AS=tester docker:fixture:steward 'defer whoami <<<"echo INVOKER=$USER HOME=$HOME"' 2>&1) || return 1;
+	[[ "$output" == *"INVOKER=tester HOME=/home/tester"* ]] || return 1;
 }
 
 test:docker:dockerfile-run() {
@@ -1469,6 +2580,45 @@ test:docker:dockerfile-run-fifo() {
 	local rc=$?; rm -fR "$DOCKER_BUILD_CTX"; return $rc;
 }
 
+# Runs steward for real inside an image build. Only here does /proc/1/mountinfo
+# name buildkit, which is what arms the clean-up stage.
+docker:buildkit() {
+	local stewardfile="$1" assertion="$2";
+	rm -fR "$DOCKER_BUILD_CTX"; mkdir -p "$DOCKER_BUILD_CTX";
+
+	printf '%s\n' "$stewardfile" > "$DOCKER_BUILD_CTX/Stewardfile";
+	cp "$SRC_DIR/steward" "$DOCKER_BUILD_CTX/steward";
+	cp -r "$SRC_DIR/.deps" "$DOCKER_BUILD_CTX/.deps";
+
+	{
+		echo "FROM ubuntu:24.04";
+		echo "COPY steward /app/steward";
+		echo "COPY .deps /app/.deps";
+		echo "COPY Stewardfile /app/Stewardfile";
+		echo "WORKDIR /app";
+		echo "RUN ./steward";
+		echo "RUN $assertion";
+	} > "$DOCKER_BUILD_CTX/Dockerfile";
+
+	timeout 300 $DOCKER build --no-cache "$DOCKER_BUILD_CTX" >/dev/null 2>&1;
+	local rc=$?; rm -fR "$DOCKER_BUILD_CTX"; return $rc;
+}
+
+test:docker:buildkit-clean-up-succeeds() {
+	docker:available || return 2;
+	docker:buildkit "steward:apt --temp jq" "true" || return 1;
+}
+
+test:docker:buildkit-removes-temp-package() {
+	docker:available || return 2;
+	docker:buildkit $'steward:apt --temp jq\nsteward:apt wget' "! command -v jq" || return 1;
+}
+
+test:docker:buildkit-keeps-requested-package() {
+	docker:available || return 2;
+	docker:buildkit $'steward:apt --temp jq\nsteward:apt wget' "command -v wget" || return 1;
+}
+
 if docker:available; then
 cat <<MD
 
@@ -1487,6 +2637,38 @@ defer-executes | defer <<< "echo X"           | X in output           | $(t dock
 include-file   | include fixtures/test.sf     | included pkg works    | $(t docker:include-file)
 dockerfile-run | RUN steward (in Dockerfile)  | reads Stewardfile     | $(t docker:dockerfile-run)
 dockerfile-fifo| RUN ./steward (writerless FIFO) | no hang, reads Stewardfile | $(t docker:dockerfile-run-fifo)
+
+### Download-and-install stages (fixture image)
+
+Scenario        | Invocation                              | Expected                              | ✓/✗
+----------------|-----------------------------------------|---------------------------------------|----
+key-armored     | key fixture http://.../key.asc          | dearmored keyring, 644 root:root      | $(t docker:key-dearmors-ascii-key)
+key-binary      | key fixture http://.../key.gpg          | copied verbatim                       | $(t docker:key-copies-binary-key)
+src-list        | src myrepo http://... jammy main uni    | sources.list.d entry, 644 root:root   | $(t docker:src-writes-source-list)
+src-no-key      | src --no-key myrepo http://... jammy    | no signed-by in the list              | $(t docker:src-no-key-omits-signed-by)
+src-deb-url     | src http://.../fixture.deb              | package installed                     | $(t docker:src-deb-url-installs)
+deb-installs    | deb http://.../fixture.deb              | package installed                     | $(t docker:deb-installs)
+bin-executable  | bin mybin http://.../mybin              | executable in /usr/local/bin, runs    | $(t docker:bin-installs-executable)
+tar-installs    | tar mytool bin/mytool http://...tgz     | binary runs, no /opt/mytool           | $(t docker:tar-installs-binary)
+tar-keep        | tar --keep mytool bin/mytool ...        | /opt/mytool + symlink                 | $(t docker:tar-keep-retains-archive)
+zip-installs    | zip mytool bin/mytool http://...zip     | unzip prereq installed, binary runs   | $(t docker:zip-installs-binary)
+zip-keep        | zip --keep mytool bin/mytool ...        | /opt/mytool + symlink                 | $(t docker:zip-keep-retains-archive)
+ext-args        | ext http://.../installer.sh sh -s -- --flag | script runs with args             | $(t docker:ext-runs-installer-with-args)
+eager-first     | eager marker; apt curl; defer check     | eager ran before packages             | $(t docker:eager-runs-before-packages)
+hooks           | hook --before/--after apt               | both hooks ran around the stage       | $(t docker:hooks-bracket-their-stage)
+guard-skips     | guard --cmd true; apt wget              | task skipped, wget absent             | $(t docker:guard-skips-satisfied-task)
+url-argument    | steward http://.../remote.Stewardfile   | remote Stewardfile processed          | $(t docker:url-stewardfile-argument)
+pip-installs    | pip six                                 | python3 -c "import six" works         | $(t docker:pip-installs-package)
+sudo-reexec     | ./steward as unprivileged user          | re-execs under sudo, installs         | $(t docker:sudo-reexec-installs)
+sudo-user       | defer echo \$USER (run via sudo)        | USER/HOME are the invoking human      | $(t docker:sudo-reexec-keeps-invoking-user)
+
+### BuildKit clean-up (only armed inside an image build)
+
+Scenario         | Invocation                        | Expected                         | ✓/✗
+-----------------|-----------------------------------|----------------------------------|----
+clean-up-runs    | RUN ./steward (apt --temp jq)     | build succeeds                   | $(t docker:buildkit-clean-up-succeeds)
+temp-removed     | apt --temp jq; apt wget           | jq gone from the final image     | $(t docker:buildkit-removes-temp-package)
+requested-kept   | apt --temp jq; apt wget           | wget kept in the final image     | $(t docker:buildkit-keeps-requested-package)
 
 MD
 else
