@@ -83,7 +83,10 @@ function steward::init() {
 	# Expose architecture & distro info
 	ARCH="$(dpkg --print-architecture)";
 	DEBIAN_FRONTEND=noninteractive;
-	LC_COLLATE=C; # force sort's collation to the byte order comm expects (uutils Ubuntu >= 25.10)
+	# comm compares bytes and rejects anything else, so sort must not collate per locale.
+	# LC_ALL outranks every LC_* category, so it has to go for LC_COLLATE to take effect.
+	unset LC_ALL;
+	LC_COLLATE=C;
 	STEWARDFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)";
 	STEWARDFILE="$STEWARDFILE_DIR/$(basename "${BASH_SOURCE[0]}")";
 
@@ -947,10 +950,14 @@ function steward::apply:clean-up() {
 	grep -q buildkit /proc/1/mountinfo 2>/dev/null || return 0;
 
 	if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
+		# A Stewardfile may declare only --temp packages, leaving these two absent; sort
+		# exits 2 on a missing file, which under set -e would kill the build.
+		touch /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs;
+
 		# Identify packages requested explicitly.
-		sort -u /tmp/steward/apt.pkgs -o /tmp/steward/apt.pkgs 2>/dev/null;
-		sort -u /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-try.pkgs 2>/dev/null;
-		sort -m -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs 2>/dev/null;
+		sort -u /tmp/steward/apt.pkgs -o /tmp/steward/apt.pkgs;
+		sort -u /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-try.pkgs;
+		sort -m -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs;
 
 		# Uninstall all temp packages (unless they were installed explicitly).
 		sort -u /tmp/steward/apt-rem.pkgs -o /tmp/steward/apt-rem.pkgs;
