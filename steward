@@ -518,8 +518,6 @@ function steward::prereq:npm() {
 
 function steward::apply:npm() {
 	[[ -f /tmp/steward/npm.pkgs ]] || return 0;
-	# runs as root: keep caches out of the normalized (human) $USER/$HOME
-	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
@@ -535,6 +533,8 @@ function steward::apply:npm() {
 		# shellcheck disable=SC2086
 		(cd "$dir" && npm install $pkgs);
 	done < /tmp/steward/npm.pkgs;
+
+	[[ -z "${SUDO_USER:-}" ]] || chown -R "$SUDO_USER" "$(npm config get cache)";
 }
 
 # @name composer
@@ -576,8 +576,6 @@ function steward::prereq:composer() {
 
 function steward::apply:composer() {
 	[[ -f /tmp/steward/composer.pkgs ]] || return 0;
-	# runs as root: keep caches out of the normalized (human) $USER/$HOME
-	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/:}";
@@ -594,6 +592,8 @@ function steward::apply:composer() {
 		# shellcheck disable=SC2086
 		(cd "$dir" && composer require $pkgs);
 	done < /tmp/steward/composer.pkgs;
+
+	[[ -z "${SUDO_USER:-}" ]] || chown -R "$SUDO_USER" "$(composer config --global home)" "$(composer config --global cache-dir --absolute)";
 }
 
 # @name helm
@@ -722,8 +722,6 @@ function steward::prereq:pip() {
 
 function steward::apply:pip() {
 	[[ -f /tmp/steward/pip.pkgs ]] || return 0;
-	# runs as root: keep caches out of the normalized (human) $USER/$HOME
-	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		pkgs="${pkgs//@/==}";
@@ -740,6 +738,8 @@ function steward::apply:pip() {
 		# shellcheck disable=SC2086
 		(cd "$dir" && python3 -m venv .venv && .venv/bin/pip install $pkgs);
 	done < /tmp/steward/pip.pkgs;
+
+	[[ -z "${SUDO_USER:-}" ]] || chown -R "$SUDO_USER" "$(pip3 cache dir)";
 }
 
 # @name go
@@ -774,8 +774,6 @@ function steward::prereq:go() {
 
 function steward::apply:go() {
 	[[ -f /tmp/steward/go.pkgs ]] || return 0;
-	# runs as root: keep caches/GOPATH out of the normalized (human) $USER/$HOME
-	local -x HOME=~root;
 
 	while IFS=$'\t' read -r dir pkgs; do
 		# shellcheck disable=SC2086
@@ -791,6 +789,8 @@ function steward::apply:go() {
 		# shellcheck disable=SC2086
 		(cd "$dir" && go get $pkgs);
 	done < /tmp/steward/go.pkgs;
+
+	[[ -z "${SUDO_USER:-}" ]] || chown -R "$SUDO_USER" "$(go env GOPATH)" "$(go env GOCACHE)";
 }
 
 # @name eager

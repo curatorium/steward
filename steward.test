@@ -597,6 +597,63 @@ test:go:missing-name() {
 	return 0;
 }
 
+# steward::apply chown Tests
+
+# chown logs to a file, not a variable: the stubs are scoped to a subshell
+# shellcheck disable=SC2329
+chown:stub() {
+	chown() { echo "CHOWN $*" >> /tmp/steward/chown.log; };
+	npm()      { [[ "$1" == "config" ]] && echo /tmp/steward/fake; return 0; };
+	pip3()     { [[ "$1" == "cache"  ]] && echo /tmp/steward/fake; return 0; };
+	go()       { [[ "$1" == "env"    ]] && echo /tmp/steward/fake; return 0; };
+	composer() { [[ "$1" == "config" ]] && echo /tmp/steward/fake; return 0; };
+}
+
+test:chown:npm:without-sudo-user() {
+	reset; printf '!global\tyarn\n' > /tmp/steward/npm.pkgs;
+	( chown:stub; unset SUDO_USER; steward::apply:npm; ) || return 1;
+}
+
+test:chown:npm:with-sudo-user() {
+	reset; printf '!global\tyarn\n' > /tmp/steward/npm.pkgs;
+	( chown:stub; SUDO_USER=someone; steward::apply:npm; ) || return 1;
+	grep -q "^CHOWN -R someone /tmp/steward/fake$" /tmp/steward/chown.log || return 1;
+}
+
+test:chown:pip:without-sudo-user() {
+	reset; printf '!global\tflask\n' > /tmp/steward/pip.pkgs;
+	( chown:stub; unset SUDO_USER; steward::apply:pip; ) || return 1;
+}
+
+test:chown:pip:with-sudo-user() {
+	reset; printf '!global\tflask\n' > /tmp/steward/pip.pkgs;
+	( chown:stub; SUDO_USER=someone; steward::apply:pip; ) || return 1;
+	grep -q "^CHOWN -R someone /tmp/steward/fake$" /tmp/steward/chown.log || return 1;
+}
+
+test:chown:go:without-sudo-user() {
+	reset; printf '!global\tgithub.com/some/pkg@latest\n' > /tmp/steward/go.pkgs;
+	( chown:stub; unset SUDO_USER; steward::apply:go; ) || return 1;
+}
+
+test:chown:go:with-sudo-user() {
+	reset; printf '!global\tgithub.com/some/pkg@latest\n' > /tmp/steward/go.pkgs;
+	( chown:stub; SUDO_USER=someone; steward::apply:go; ) || return 1;
+	grep -q "^CHOWN -R someone /tmp/steward/fake /tmp/steward/fake$" /tmp/steward/chown.log || return 1;
+}
+
+test:chown:composer:without-sudo-user() {
+	reset; printf '!global\tlaravel/installer\n' > /tmp/steward/composer.pkgs;
+	( chown:stub; unset SUDO_USER; steward::apply:composer; ) || return 1;
+}
+
+test:chown:composer:with-sudo-user() {
+	reset; printf '!global\tlaravel/installer\n' > /tmp/steward/composer.pkgs;
+	# shellcheck disable=SC2034
+	( chown:stub; SUDO_USER=someone; steward::apply:composer; ) || return 1;
+	grep -q "^CHOWN -R someone /tmp/steward/fake /tmp/steward/fake$" /tmp/steward/chown.log || return 1;
+}
+
 # steward:eager Tests
 #------------------------------------------------------------------------------
 
@@ -1177,6 +1234,21 @@ unused        | (no go calls)               | no manifest generated     | $(t go
 local-dir     | go --dir /app              | cd + go mod download      | $(t go:local-dir)
 local-dir+pkg | go --dir /app pkg           | cd + go get pkg@latest    | $(t go:local-dir-with-name)
 missing-name  | go                          | error                     | $(t go:missing-name)
+
+---
+
+## steward::apply chown
+
+Scenario          | Invocation                        | Expected                        | ✓/✗
+------------------|-----------------------------------|---------------------------------|----
+npm-no-sudo       | apply:npm (SUDO_USER unset)       | returns 0, no chown             | $(t chown:npm:without-sudo-user)
+npm-sudo          | apply:npm (SUDO_USER set)         | chowns npm cache                | $(t chown:npm:with-sudo-user)
+pip-no-sudo       | apply:pip (SUDO_USER unset)       | returns 0, no chown             | $(t chown:pip:without-sudo-user)
+pip-sudo          | apply:pip (SUDO_USER set)         | chowns pip cache                | $(t chown:pip:with-sudo-user)
+go-no-sudo        | apply:go (SUDO_USER unset)        | returns 0, no chown             | $(t chown:go:without-sudo-user)
+go-sudo           | apply:go (SUDO_USER set)          | chowns GOPATH + GOCACHE         | $(t chown:go:with-sudo-user)
+composer-no-sudo  | apply:composer (SUDO_USER unset)  | returns 0, no chown             | $(t chown:composer:without-sudo-user)
+composer-sudo     | apply:composer (SUDO_USER set)    | chowns home + cache-dir         | $(t chown:composer:with-sudo-user)
 
 ---
 

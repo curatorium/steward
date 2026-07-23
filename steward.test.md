@@ -172,6 +172,21 @@ missing-name  | go                          | error                     | ✅
 
 ---
 
+## steward::apply chown
+
+Scenario          | Invocation                        | Expected                        | ✓/✗
+------------------|-----------------------------------|---------------------------------|----
+npm-no-sudo       | apply:npm (SUDO_USER unset)       | returns 0, no chown             | ✅
+npm-sudo          | apply:npm (SUDO_USER set)         | chowns npm cache                | ✅
+pip-no-sudo       | apply:pip (SUDO_USER unset)       | returns 0, no chown             | ✅
+pip-sudo          | apply:pip (SUDO_USER set)         | chowns pip cache                | ✅
+go-no-sudo        | apply:go (SUDO_USER unset)        | returns 0, no chown             | ✅
+go-sudo           | apply:go (SUDO_USER set)          | chowns GOPATH + GOCACHE         | ✅
+composer-no-sudo  | apply:composer (SUDO_USER unset)  | returns 0, no chown             | ✅
+composer-sudo     | apply:composer (SUDO_USER set)    | chowns home + cache-dir         | ✅
+
+---
+
 ## steward:eager
 
 Scenario      | Invocation                          | Expected                  | ✓/✗
@@ -294,5 +309,5 @@ dockerfile-fifo| RUN ./steward (writerless FIFO) | no hang, reads Stewardfile | 
 
 | ✅ Pass | ❌ Fail | ⚠️ Error |
 |---------|---------|----------|
-| 134 | 0 | 0 |
+| 142 | 0 | 0 |
 
