@@ -79,12 +79,15 @@ function steward::init() {
 
 	rm -fR /tmp/steward;
 	mkdir -p /tmp/steward;
+	[[ -z "${SUDO_USER:-}" ]] || chown "$SUDO_USER" /tmp/steward;
+
+	# `include <url>` and the download stages write here during collection, long before
+	# apply:prereqs would create it; unprivileged runs re-exec under sudo and retry.
+	mkdir -p /var/cache/steward 2>/dev/null || true;
 
 	# Expose architecture & distro info
 	ARCH="$(dpkg --print-architecture)";
 	DEBIAN_FRONTEND=noninteractive;
-	# comm compares bytes and rejects anything else, so sort must not collate per locale.
-	# LC_ALL outranks every LC_* category, so it has to go for LC_COLLATE to take effect.
 	unset LC_ALL;
 	LC_COLLATE=C;
 	STEWARDFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)";
@@ -266,27 +269,33 @@ function steward:apt() {
 	local temp=; args:flag temp "";
 	local name=; args:arg name || return;
 
-	if [[ "$try" == "true" ]]; then
-		echo "$name" >> /tmp/steward/apt-try.pkgs;
-	else
-		echo "$name" >> /tmp/steward/apt.pkgs;
-	fi
-	if [[ "$temp" == "true" ]]; then
-		echo "$name" >> /tmp/steward/apt-rem.pkgs;
-	fi
+	# Temp packages get their own manifest: keeping them out of apt.pkgs is what lets
+	# clean-up subtract the explicitly requested ones and still have something left.
+	local dest="apt";
+	[[ "$temp" == "true" ]] && dest="apt-temp";
+	[[ "$try" == "true" ]] && dest="$dest-try";
+
+	echo "$name" >> "/tmp/steward/$dest.pkgs";
 }
 
 function steward::apply:apt() {
-	[[ -f /tmp/steward/apt.pkgs ]] || [[ -f /tmp/steward/apt-try.pkgs ]] || return 0;
+	local manifest;
+	for manifest in apt apt-try apt-temp apt-temp-try; do
+		[[ -f "/tmp/steward/$manifest.pkgs" ]] && break;
+		[[ "$manifest" == "apt-temp-try" ]] && return 0;
+	done
 
 	apt update -qq;
 
-	if [[ -f /tmp/steward/apt.pkgs ]]; then
-		xargs -r apt install -qqy --no-install-recommends < /tmp/steward/apt.pkgs;
-	fi
-	if [[ -f /tmp/steward/apt-try.pkgs ]]; then
-		xargs -r apt install -qqy --no-install-recommends < /tmp/steward/apt-try.pkgs || true;
-	fi
+	# Temp packages install alongside the explicit ones; clean-up decides what goes back out.
+	for manifest in apt apt-temp; do
+		[[ -f "/tmp/steward/$manifest.pkgs" ]] || continue;
+		xargs -r apt install -qqy --no-install-recommends < "/tmp/steward/$manifest.pkgs";
+	done
+	for manifest in apt-try apt-temp-try; do
+		[[ -f "/tmp/steward/$manifest.pkgs" ]] || continue;
+		xargs -r apt install -qqy --no-install-recommends < "/tmp/steward/$manifest.pkgs" || true;
+	done
 }
 
 # @name deb
@@ -308,15 +317,11 @@ function steward:deb() {
 
 	echo "$url	$file	$try" >> /tmp/steward/deb.pkgs;
 
-	if [[ "$try" == "true" ]]; then
-		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt-try.pkgs;
-	else
-		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt.pkgs;
-	fi
+	local dest="apt";
+	[[ "$temp" == "true" ]] && dest="apt-temp";
+	[[ "$try" == "true" ]] && dest="$dest-try";
 
-	if [[ "$temp" == "true" ]]; then
-		echo "/var/cache/apt/archives/$file" >> /tmp/steward/apt-rem.pkgs;
-	fi
+	echo "/var/cache/steward/$file" >> "/tmp/steward/$dest.pkgs";
 }
 
 function steward::apply:deb() {
@@ -324,16 +329,18 @@ function steward::apply:deb() {
 
 	while IFS=$'\t' read -r url file try; do
 		if [[ "$try" == "true" ]]; then
-			curl -1fsSLR -z "/var/cache/apt/archives/$file" -o "/var/cache/apt/archives/$file" "$url" || true;
+			curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url" || true;
 		else
-			curl -1fsSLR -z "/var/cache/apt/archives/$file" -o "/var/cache/apt/archives/$file" "$url";
+			curl -1fsSLR -z "/var/cache/steward/$file" -o "/var/cache/steward/$file" "$url";
 		fi
 
-		# Resolve .deb path to package name in removal manifest
-		if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
-			local pkg; pkg=$(dpkg-deb --field "/var/cache/apt/archives/$file" Package 2>/dev/null);
-			[[ -n "$pkg" ]] && sed -i "s|^/var/cache/apt/archives/$file$|$pkg|" /tmp/steward/apt-rem.pkgs;
-		fi
+		# apt remove takes a package name, not the .deb path the collector recorded
+		local pkg manifest;
+		pkg=$(dpkg-deb --field "/var/cache/steward/$file" Package 2>/dev/null) || true;
+		for manifest in apt-temp apt-temp-try; do
+			[[ -n "$pkg" && -f "/tmp/steward/$manifest.pkgs" ]] || continue;
+			sed -i "s|^/var/cache/steward/$file$|$pkg|" "/tmp/steward/$manifest.pkgs";
+		done
 	done < /tmp/steward/deb.pkgs;
 }
 
@@ -949,19 +956,15 @@ function steward::apply:prereqs() {
 function steward::apply:clean-up() {
 	grep -q buildkit /proc/1/mountinfo 2>/dev/null || return 0;
 
-	if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
-		# A Stewardfile may declare only --temp packages, leaving these two absent; sort
-		# exits 2 on a missing file, which under set -e would kill the build.
-		touch /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs;
+	if [[ -f /tmp/steward/apt-temp.pkgs || -f /tmp/steward/apt-temp-try.pkgs ]]; then
+		touch /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs \
+		      /tmp/steward/apt-temp.pkgs /tmp/steward/apt-temp-try.pkgs; # sort exits 2 on a missing file
 
-		# Identify packages requested explicitly.
-		sort -u /tmp/steward/apt.pkgs -o /tmp/steward/apt.pkgs;
-		sort -u /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-try.pkgs;
-		sort -m -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs;
+		# Packages requested in their own right are kept even when also marked temp.
+		sort -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs;
+		sort -u /tmp/steward/apt-temp.pkgs /tmp/steward/apt-temp-try.pkgs -o /tmp/steward/apt-temp-all.pkgs;
 
-		# Uninstall all temp packages (unless they were installed explicitly).
-		sort -u /tmp/steward/apt-rem.pkgs -o /tmp/steward/apt-rem.pkgs;
-		comm -23 /tmp/steward/apt-rem.pkgs /tmp/steward/apt-keep.pkgs | xargs -r apt remove -qqy;
+		comm -23 /tmp/steward/apt-temp-all.pkgs /tmp/steward/apt-keep.pkgs | xargs -r apt remove -qqy;
 	fi
 
 	apt autoremove -y --purge;
