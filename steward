@@ -83,12 +83,13 @@ function steward::init() {
 	# Expose architecture & distro info
 	ARCH="$(dpkg --print-architecture)";
 	DEBIAN_FRONTEND=noninteractive;
+	LC_COLLATE=C; # force sort's collation to the byte order comm expects (uutils Ubuntu >= 25.10)
 	STEWARDFILE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)";
 	STEWARDFILE="$STEWARDFILE_DIR/$(basename "${BASH_SOURCE[0]}")";
 
 	# shellcheck source=/dev/null
 	source /etc/os-release;
-	export ARCH DEBIAN_FRONTEND STEWARDFILE STEWARDFILE_DIR;
+	export ARCH DEBIAN_FRONTEND STEWARDFILE STEWARDFILE_DIR LC_COLLATE;
 
 	# sudo -- including steward's own privilege re-exec -- resets USER/HOME to
 	# root's. In a Stewardfile "$USER"/"$HOME" mean the invoking human: root is
@@ -947,9 +948,12 @@ function steward::apply:clean-up() {
 
 	if [[ -f /tmp/steward/apt-rem.pkgs ]]; then
 		# Identify packages requested explicitly.
+		sort -u /tmp/steward/apt.pkgs -o /tmp/steward/apt.pkgs 2>/dev/null;
+		sort -u /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-try.pkgs 2>/dev/null;
 		sort -m -u /tmp/steward/apt.pkgs /tmp/steward/apt-try.pkgs -o /tmp/steward/apt-keep.pkgs 2>/dev/null;
 
 		# Uninstall all temp packages (unless they were installed explicitly).
+		sort -u /tmp/steward/apt-rem.pkgs -o /tmp/steward/apt-rem.pkgs;
 		comm -23 /tmp/steward/apt-rem.pkgs /tmp/steward/apt-keep.pkgs | xargs -r apt remove -qqy;
 	fi
 
