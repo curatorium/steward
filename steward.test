@@ -394,16 +394,18 @@ test:npm:batched() {
 
 test:npm:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/npm.pkgs ]] || return 1;
+	steward:apt vim || return 1;
+	[[ ! -e /tmp/steward/npm.pkgs ]] || return 1;
+	( fake npm; steward::apply:npm; ) || return 1;
+	logged "npm" && return 1;
+	return 0;
 }
 
 test:npm:prereq-skipped-when-present() {
 	# Simulate npm being available — no key/src/packages should be generated
 	reset;
-	echo '#!/bin/bash' > /usr/local/bin/npm && chmod +x /usr/local/bin/npm;
-	steward:npm is-odd || { rm -f /usr/local/bin/npm; return 1; };
-	steward::prereq:npm || { rm -f /usr/local/bin/npm; return 1; };
-	rm -f /usr/local/bin/npm;
+	steward:npm is-odd || return 1;
+	( fake npm; steward::prereq:npm; ) || return 1;
 	[[ ! -f /tmp/steward/key.lst ]] || return 1;
 	[[ ! -f /tmp/steward/src.lst ]] || return 1;
 	[[ ! -f /tmp/steward/apt.pkgs ]] || return 1;
@@ -475,7 +477,11 @@ test:composer:batched() {
 
 test:composer:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/composer.pkgs ]] || return 1;
+	steward:apt vim || return 1;
+	[[ ! -e /tmp/steward/composer.pkgs ]] || return 1;
+	( fake composer; steward::apply:composer; ) || return 1;
+	logged "composer" && return 1;
+	return 0;
 }
 
 test:composer:local-dir() {
@@ -573,7 +579,11 @@ test:helm:guard-once() {
 
 test:helm:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/helm.pkgs ]] || return 1;
+	steward:apt vim || return 1;
+	[[ ! -e /tmp/steward/helm.pkgs ]] || return 1;
+	( fake helm; steward::apply:helm; ) || return 1;
+	logged "helm" && return 1;
+	return 0;
 }
 
 test:helm:missing-release() {
@@ -632,7 +642,11 @@ test:pip:batched() {
 
 test:pip:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/pip.pkgs ]] || return 1;
+	steward:apt vim || return 1;
+	[[ ! -e /tmp/steward/pip.pkgs ]] || return 1;
+	( fake pip3; steward::apply:pip; ) || return 1;
+	logged "pip3" && return 1;
+	return 0;
 }
 
 test:pip:local-dir() {
@@ -694,7 +708,11 @@ test:go:batched() {
 
 test:go:not-generated-if-unused() {
 	reset;
-	[[ ! -f /tmp/steward/go.pkgs ]] || return 1;
+	steward:apt vim || return 1;
+	[[ ! -e /tmp/steward/go.pkgs ]] || return 1;
+	( fake go; steward::apply:go; ) || return 1;
+	logged "go" && return 1;
+	return 0;
 }
 
 test:go:local-dir() {
@@ -745,6 +763,7 @@ chown:stub() {
 test:chown:npm:without-sudo-user() {
 	reset; printf '!global\tyarn\n' > /tmp/steward/npm.pkgs;
 	( chown:stub; unset SUDO_USER; steward::apply:npm; ) || return 1;
+	[[ ! -e /tmp/steward/chown.log ]] || return 1;
 }
 
 test:chown:npm:with-sudo-user() {
@@ -756,6 +775,7 @@ test:chown:npm:with-sudo-user() {
 test:chown:pip:without-sudo-user() {
 	reset; printf '!global\tflask\n' > /tmp/steward/pip.pkgs;
 	( chown:stub; unset SUDO_USER; steward::apply:pip; ) || return 1;
+	[[ ! -e /tmp/steward/chown.log ]] || return 1;
 }
 
 test:chown:pip:with-sudo-user() {
@@ -767,6 +787,7 @@ test:chown:pip:with-sudo-user() {
 test:chown:go:without-sudo-user() {
 	reset; printf '!global\tgithub.com/some/pkg@latest\n' > /tmp/steward/go.pkgs;
 	( chown:stub; unset SUDO_USER; steward::apply:go; ) || return 1;
+	[[ ! -e /tmp/steward/chown.log ]] || return 1;
 }
 
 test:chown:go:with-sudo-user() {
@@ -778,6 +799,7 @@ test:chown:go:with-sudo-user() {
 test:chown:composer:without-sudo-user() {
 	reset; printf '!global\tlaravel/installer\n' > /tmp/steward/composer.pkgs;
 	( chown:stub; unset SUDO_USER; steward::apply:composer; ) || return 1;
+	[[ ! -e /tmp/steward/chown.log ]] || return 1;
 }
 
 test:chown:composer:with-sudo-user() {
@@ -1063,74 +1085,72 @@ test:include:relative-path() {
 
 test:guard:cmd-present() {
 	reset;
-	# guard should exit 0 (skip) when command exists; run in subshell to catch exit
-	(steward:guard bash) && return 0;
-	return 1;
+	local out; out=$( steward:guard bash; echo CONTINUED );
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:cmd-absent() {
 	reset;
-	# guard should NOT exit when command doesn't exist; function continues
-	(steward:guard nonexistent-cmd-xyz-12345 && echo "continued") || return 1;
-	return 0;
+	local out; out=$( steward:guard nonexistent-cmd-xyz-12345; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:file-present() {
 	reset;
-	local tmpfile=$(mktemp);
-	(steward:guard --file "$tmpfile") && { rm -f "$tmpfile"; return 0; };
+	local tmpfile; tmpfile=$(mktemp);
+	local out; out=$( steward:guard --file "$tmpfile"; echo CONTINUED );
 	rm -f "$tmpfile";
-	return 1;
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:file-absent() {
 	reset;
-	(steward:guard --file /nonexistent/file/xyz && echo "continued") || return 1;
-	return 0;
+	local out; out=$( steward:guard --file /nonexistent/file/xyz; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:dir-present() {
 	reset;
-	(steward:guard --dir /tmp) && return 0;
-	return 1;
+	local out; out=$( steward:guard --dir /tmp; echo CONTINUED );
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:dir-absent() {
 	reset;
-	(steward:guard --dir /nonexistent/dir/xyz && echo "continued") || return 1;
-	return 0;
+	local out; out=$( steward:guard --dir /nonexistent/dir/xyz; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:pkg-present() {
 	reset;
 	# bash is dpkg-managed on every test box that has bash itself.
-	(steward:guard --pkg bash) && return 0;
-	return 1;
+	local out; out=$( steward:guard --pkg bash; echo CONTINUED );
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:pkg-absent() {
 	reset;
-	(steward:guard --pkg nonexistent-pkg-xyz-12345 && echo "continued") || return 1;
-	return 0;
+	local out; out=$( steward:guard --pkg nonexistent-pkg-xyz-12345; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:cmd-success() {
 	reset;
-	(steward:guard --cmd 'true') && return 0;
-	return 1;
+	local out; out=$( steward:guard --cmd 'true'; echo CONTINUED );
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:cmd-failure() {
 	reset;
-	(steward:guard --cmd 'false' && echo "continued") || return 1;
-	return 0;
+	local out; out=$( steward:guard --cmd 'false'; echo CONTINUED );
+	[[ "$out" == "CONTINUED" ]] || return 1;
 }
 
 test:guard:cmd-multi-word() {
 	reset;
 	# Whole quoted string is one positional arg; bash -c runs it.
-	(steward:guard --cmd 'test -d /tmp && test -r /tmp') && return 0;
-	return 1;
+	local out; out=$( steward:guard --cmd 'test -d /tmp && test -r /tmp'; echo CONTINUED );
+	[[ -z "$out" ]] || return 1;
 }
 
 test:guard:force-bypasses-file() {
