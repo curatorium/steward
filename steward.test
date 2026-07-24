@@ -69,10 +69,7 @@ test:key:non-http-url() {
 test:src:valid-full() {
 	reset;
 	steward:src docker https://download.docker.com/linux/ubuntu jammy stable || return 1;
-	[[ -f /tmp/steward/src.lst ]] || return 1;
-	grep -q "download.docker.com" /tmp/steward/src.lst || return 1;
-	grep -q "jammy" /tmp/steward/src.lst || return 1;
-	grep -q "stable" /tmp/steward/src.lst || return 1;
+	grep -qxP '^https://download\.docker\.com/linux/ubuntu\tdocker\t\[signed-by=/usr/share/keyrings/docker\.gpg\]\tjammy\tstable$' /tmp/steward/src.lst || return 1;
 }
 
 test:src:valid-deb-url() {
@@ -85,8 +82,7 @@ test:src:valid-deb-url() {
 test:src:no-key-flag() {
 	reset;
 	steward:src --no-key ppa https://ppa.example.com jammy main || return 1;
-	generated "signed-by" && return 1;
-	return 0;
+	grep -qxF $'https://ppa.example.com\tppa\t\tjammy\tmain' /tmp/steward/src.lst || return 1;
 }
 
 test:src:minimal-repo() {
@@ -564,17 +560,29 @@ test:helm:with-repo() {
 
 test:helm:repo-dedup() {
 	reset;
-	steward:helm default/my-nginx bitnami/nginx https://charts.bitnami.com/bitnami || return 1;
-	steward:helm default/my-redis bitnami/redis https://charts.bitnami.com/bitnami || return 1;
-	sort -u -o /tmp/steward/helm.lst /tmp/steward/helm.lst;
+	local sf; sf=$(mktemp);
+	printf '%s\n' \
+		'steward:helm default/my-nginx bitnami/nginx https://charts.bitnami.com/bitnami' \
+		'steward:helm default/my-redis bitnami/redis https://charts.bitnami.com/bitnami' > "$sf";
+	( cd "$SRC_DIR" && "$STEWARD" --dry-run "$sf" ) >/dev/null 2>&1;
+	local rc=$?; rm -f "$sf";
+	[[ $rc -eq 0 ]] || return 1;
+	[[ $(grep -cx $'bitnami\thttps://charts.bitnami.com/bitnami' /tmp/steward/helm.lst) -eq 1 ]] || return 1;
 	[[ $(wc -l < /tmp/steward/helm.lst) -eq 1 ]] || return 1;
 }
 
 test:helm:guard-once() {
 	reset;
-	steward:helm default/my-nginx bitnami/nginx || return 1;
-	steward:helm default/my-redis bitnami/redis || return 1;
-	[[ $(wc -l < /tmp/steward/helm.pkgs) -eq 2 ]] || return 1;
+	local sf; sf=$(mktemp);
+	printf '%s\n' \
+		'task skip() { guard --cmd true; steward:helm default/nope bitnami/nginx; }' \
+		'task run()  { steward:helm default/yes bitnami/redis; }' > "$sf";
+	( cd "$SRC_DIR" && "$STEWARD" --dry-run "$sf" ) >/dev/null 2>&1;
+	local rc=$?; rm -f "$sf";
+	[[ $rc -eq 0 ]] || return 1;
+	grep -qP "^yes\t" /tmp/steward/helm.pkgs || return 1;
+	grep -qP "^nope\t" /tmp/steward/helm.pkgs && return 1;
+	return 0;
 }
 
 test:helm:not-generated-if-unused() {
@@ -1282,11 +1290,14 @@ test:cli:default-stewardfile() {
 }
 
 test:cli:dry-run-no-exec() {
+	reset;
+	local marker="$TEST_DIR/apt-ran";
+	fake apt "touch '$marker'";
 	local output;
 	output=$(cd "$SRC_DIR" && "$STEWARD" --dry-run <<<"steward:apt vim" 2>&1);
-	# dry-run should cat scripts, not source them
-	# check that we see the script content printed
-	[[ "$output" == *"apt"* ]] || return 1;
+	[[ "$output" == *"=== apt.pkgs ==="* ]] || return 1;
+	[[ "$(sed -n '/=== apt.pkgs ===/{n;p}' <<<"$output")" == vim ]] || return 1;
+	[[ ! -e "$marker" ]] || return 1;
 }
 
 test:cli:task-runs-only-named() {
@@ -1334,7 +1345,10 @@ test:cli:trace-app() {
 	local err;
 	err=$( (cd "$SRC_DIR" && "$STEWARD" --dry-run --trace app <<<'steward:apt pkg-traced') 2>&1 >/dev/null ) || return 1;
 	grep -qx "pkg-traced" /tmp/steward/apt.pkgs || return 1;
-	[[ "$err" == *"steward"* ]] || return 1;
+	# app traces in-file frames but not the vendored deps; all would show both
+	grep -qE "/steward:[0-9]+ " <<<"$err" || return 1;
+	grep -q "\.deps/" <<<"$err" && return 1;
+	return 0;
 }
 
 test:cli:stewardfile-dist-fallback() {
@@ -1375,7 +1389,7 @@ test:cli:exposes-stewardfile-dir() {
 	echo 'steward:apt "pkg-${STEWARDFILE_DIR//\//-}"' > "$tmpfile";
 	(cd "$SRC_DIR" && "$STEWARD" --dry-run "$tmpfile") >/dev/null 2>&1 || { rm -f "$tmpfile"; return 1; };
 	rm -f "$tmpfile";
-	grep -q "^pkg--" /tmp/steward/apt.pkgs || return 1;
+	grep -qx "pkg-${SRC_DIR//\//-}" /tmp/steward/apt.pkgs || return 1;
 }
 
 test:cli:wipes-stale-manifests() {
@@ -1677,7 +1691,7 @@ test:apply:clean-up:removes-temp-packages() {
 	steward:apt --temp build-dep;
 	steward:apt vim;
 	steward:apt --try optional;
-	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
 	logged "apt remove -qqy build-dep @" || return 1;
 }
 
@@ -1685,7 +1699,8 @@ test:apply:clean-up:keeps-explicitly-requested-packages() {
 	reset;
 	steward:apt --temp build-dep;
 	steward:apt vim;
-	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
+	logged "apt remove -qqy build-dep @" || return 1;
 	grep -F "apt remove" "$TEST_DIR/cmd.log" 2>/dev/null | grep -q "vim" && return 1;
 	return 0;
 }
@@ -1693,14 +1708,14 @@ test:apply:clean-up:keeps-explicitly-requested-packages() {
 test:apply:clean-up:removes-lone-temp-package() {
 	reset;
 	steward:apt --temp build-dep;
-	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
 	logged "apt remove -qqy build-dep @" || return 1;
 }
 
 test:apply:clean-up:removes-try-temp-package() {
 	reset;
 	steward:apt --try --temp build-dep;
-	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; );
+	( strict:on; fake grep; fake apt; fake findmnt; steward::apply:clean-up; ) || return 1;
 	logged "apt remove -qqy build-dep @" || return 1;
 }
 
